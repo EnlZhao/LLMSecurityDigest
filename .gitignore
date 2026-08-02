@@ -5,5 +5,9 @@ cache/
 logs/
 run.lock
 .DS_Store
-docs/superpowers
-tests
+.hermes/
+docs/superpowers/
+tests/
+
+# 内部 agent SOP（不应公开）
+cron_prompt.md

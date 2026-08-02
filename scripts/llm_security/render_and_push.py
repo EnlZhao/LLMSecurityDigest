@@ -199,7 +199,7 @@ def main() -> int:
         print(f"[push] {'OK' if ok else 'FAIL'}: {info}", file=sys.stderr)
         if not ok:
             return 2
-        # 输出 README 内容到 stdout（供飞书推送）
+        # 输出 README 内容到 stdout
         sys.stdout.write(readme)
         sys.stdout.write(f"\n\n✅ 已 push 到 GitHub: `{info}` | {args.date}\n")
         sys.stdout.write("💡 回复论文编号（如 #3）开始详细阅读\n")
