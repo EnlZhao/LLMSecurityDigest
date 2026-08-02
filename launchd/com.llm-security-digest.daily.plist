@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.llm-security-digest.daily</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/ez/llm-security-digest/.venv/bin/python</string>
+    <string>-m</string>
+    <string>llm_security_digest.runner</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/ez/llm-security-digest</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>TZ</key>
+    <string>Asia/Shanghai</string>
+    <key>PATH</key>
+    <string>/Users/ez/llm-security-digest/.venv/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>6</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/ez/llm-security-digest/logs/launchd.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/ez/llm-security-digest/logs/launchd.err.log</string>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
