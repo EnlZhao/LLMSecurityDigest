@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>LLM Security Digest</title>
+    <link>https://EnlZhao.github.io/LLMSecurityDigest</link>
+    <description>Daily LLM Security papers — top venue & arxiv, bilingual EN/ZH summaries</description>
+    <language>zh-CN</language>
+    <lastBuildDate>2026-08-02T11:30:37Z</lastBuildDate>
+    <item>
+      <title>2026-08-02 LLM Security Digest</title>
+      <link>https://EnlZhao.github.io/LLMSecurityDigest/digest/2026-08-02.html</link>
+      <description>- **A. Jailbreak & Prompt Injection**：#1, #2, #3, #4, #5</description>
+      <pubDate>2026-08-02T06:00:00Z</pubDate>
+      <guid>https://EnlZhao.github.io/LLMSecurityDigest/digest/2026-08-02.html</guid>
+    </item>
+
+  </channel>
+</rss>
