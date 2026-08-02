@@ -754,7 +754,7 @@ git commit -m "feat: runner entry with safe cleanup"
     <integer>0</integer>
   </dict>
   <key>RunAtLoad</key>
-  <false/>
+  <true/>
   <key>StandardOutPath</key>
   <string>/Users/ez/llm-security-digest/logs/launchd.out.log</string>
   <key>StandardErrorPath</key>
@@ -764,6 +764,8 @@ git commit -m "feat: runner entry with safe cleanup"
 </dict>
 </plist>
 ```
+
+> 备注：`RunAtLoad: true` 让电脑从睡眠唤醒或开机后补跑当天任务；runner 内部通过 Notion 已存在记录数判断是否真的需要写入，从而保持幂等。
 
 - [ ] **Step 2: 验证 plist 语法**
 
