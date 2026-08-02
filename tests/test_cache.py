@@ -10,6 +10,7 @@ from llm_security_digest import cache, config
 @pytest.fixture
 def isolated_cache(monkeypatch, tmp_path: Path):
     fake_root = tmp_path / "cache"
+    fake_root.mkdir()
     monkeypatch.setattr(config, "CACHE_ROOT", fake_root)
     return fake_root
 
