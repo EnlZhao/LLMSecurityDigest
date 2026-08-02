@@ -2,22 +2,64 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Archive — LLM Security Digest</title>
+  <meta name="description" content="Daily LLM Security papers — top venue & arxiv, bilingual EN/ZH summaries">
   <link rel="stylesheet" href="assets/style.css">
+  
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body, {delimiters: [{left: '$$', right: '$$', display: true}, {left: '$', right: '$', display: false}], throwOnError: false});"></script>
+
 </head>
-<body>
-<header class="site">
-  <div class="container">
-    <h1><a href="index.html">LLM Security Digest</a></h1>
+<body class="">
+
+<header class="site-header">
+  <div class="header-inner">
+    <a href="index.html" class="brand">
+      <span class="brand-mark">LS</span>
+      <span class="brand-text">LLM Security Digest</span>
+    </a>
+    <nav class="primary-nav">
+      <a href="index.html" class="active">Home</a>
+      <a href="archive.html" class="">Archive</a>
+      <a href="rss.xml">RSS</a>
+      <a href="https://github.com/EnlZhao/LLMSecurityDigest">GitHub</a>
+    </nav>
   </div>
 </header>
+<div class="single-col">
+<header class="content-header">
+  <h1 class="page-title">Archive</h1>
+  <p class="lead">所有每日摘要，按日期倒序排列</p>
+</header>
 
-<div class="container">
-  <h1>Archive</h1>
-  <ul class="digest-list">
-    <li>📅 <a href="digest/2026-08-02.html">2026-08-02</a></li>
-  </ul>
-  <p><a href="index.html">← 返回首页</a></p>
-</div>
+<div class="card-grid">
+
+  <a class="day-card" href="digest/2026-08-02.html">
+    <div class="day-date">2026-08-02</div>
+    <div class="day-count">20 papers</div>
+    <div class="day-arrow">→</div>
+  </a>
+</div></div>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div class="footer-col">
+      <strong>LLM Security Digest</strong>
+      <p class="muted">Daily LLM Security papers · 双语摘要 · Top venue + arXiv</p>
+    </div>
+    <div class="footer-col">
+      <strong>导航</strong>
+      <p><a href="index.html">Home</a> · <a href="archive.html">Archive</a> · <a href="rss.xml">RSS</a> · <a href="https://github.com/EnlZhao/LLMSecurityDigest">GitHub</a></p>
+    </div>
+    <div class="footer-col">
+      <strong>配置</strong>
+      <p class="muted">主方向：<code>LLM as attacker 的静态防御</code></p>
+      <p class="muted">修改：编辑 <code>~/.hermes/profile_user.json</code></p>
+    </div>
+  </div>
+</footer>
+
 </body>
 </html>

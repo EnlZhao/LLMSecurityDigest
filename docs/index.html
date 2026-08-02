@@ -3,53 +3,136 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LLM Security Digest</title>
+  <title>LLM Security Digest — LLM Security Digest</title>
   <meta name="description" content="Daily LLM Security papers — top venue & arxiv, bilingual EN/ZH summaries">
   <link rel="stylesheet" href="assets/style.css">
+  
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body, {delimiters: [{left: '$$', right: '$$', display: true}, {left: '$', right: '$', display: false}], throwOnError: false});"></script>
+
 </head>
-<body>
-<header class="site">
-  <div class="container">
-    <h1><a href="index.html">LLM Security Digest</a></h1>
-    <nav>
-      <a href="archive.html">Archive</a>
+<body class="">
+
+<header class="site-header">
+  <div class="header-inner">
+    <a href="index.html" class="brand">
+      <span class="brand-mark">LS</span>
+      <span class="brand-text">LLM Security Digest</span>
+    </a>
+    <nav class="primary-nav">
+      <a href="index.html" class="active">Home</a>
+      <a href="archive.html" class="">Archive</a>
       <a href="rss.xml">RSS</a>
       <a href="https://github.com/EnlZhao/LLMSecurityDigest">GitHub</a>
     </nav>
   </div>
 </header>
 
-<div class="container">
-  <p>Daily LLM Security papers — top venue & arxiv, bilingual EN/ZH summaries。每天 06:00 自动从顶会（USENIX Security / S&P / CCS / NDSS / NeurIPS / ICML / ICLR / AAAI / ACL / EMNLP）和 arXiv 收集 20 篇高质量论文（10 篇主方向 + 10 篇大方向），双语摘要 + 用户手动触发详细精读笔记。</p>
-
-  <h2>📅 最新摘要</h2>
-  <ul class="digest-list">
-    <li>📅 <a href="digest/2026-08-02.html">2026-08-02</a> <span class="meta">(20 篇)</span></li>
-  </ul>
-
-  <h2>📄 最新详细笔记</h2>
-  <ul class="digest-list">
-    <li>📄 <a href="notes/usenix-security/llm-jailbreak/2404.01833_crescendo.html">Crescendo: 多轮 LLM 越狱攻击</a> <span class="meta">USENIX Security 2025 · 2404.01833</span></li>
-  </ul>
-
-  <h2>🏷️ 按方向浏览</h2>
-  <div class="tag-cloud">
-    <a class="tag" href="tags/llm-jailbreak.html">llm-jailbreak</a>
-    <a class="tag" href="tags/llm-prompt-injection.html">llm-prompt-injection</a>
-    <a class="tag" href="tags/llm-privacy.html">llm-privacy</a>
-    <a class="tag" href="tags/llm-backdoor.html">llm-backdoor</a>
-    <a class="tag" href="tags/llm-alignment.html">llm-alignment</a>
-    <a class="tag" href="tags/llm-agent-security.html">llm-agent-security</a>
+<div class="two-col">
+  <aside class="sidebar">
+    
+<nav class="sidebar-toc">
+  <div class="sidebar-section">
+    <div class="sidebar-title">⚙️ 配置</div>
+    <p class="muted">主方向：<code>LLM as attacker 的静态防御</code></p>
+    <p class="muted">每日 10 篇主方向 + 10 篇大方向</p>
+    <p class="muted">修改：编辑 <code>~/.hermes/profile_user.json</code></p>
   </div>
 
-  <h2>🔗 关于</h2>
-  <p>本站由 Hermes Agent 自动构建。数据源：arxiv <code>co:</code> 顶会标注 + 关键词检索 + Semantic Scholar 机构补全。摘要由 LLM 推理筛选与生成。详细笔记由 <code>deeppapernote</code> skill 生成。</p>
-  <p>主方向当前配置：<code>LLM as attacker 的静态防御</code>。修改主方向：编辑 <code>~/.hermes/profile_user.json</code>。</p>
+  <div class="sidebar-section">
+    <div class="sidebar-title">🏷️ Tags</div>
+    <div class="tag-cloud">
+      <span class="tag">llm-jailbreak</span>
+      <span class="tag">llm-prompt-injection</span>
+      <span class="tag">llm-privacy</span>
+      <span class="tag">llm-backdoor</span>
+      <span class="tag">llm-alignment</span>
+      <span class="tag">llm-agent-security</span>
+      <span class="tag tag-jailbreak">static-defense</span>
+      <span class="tag tag-jailbreak">prompt-injection-defense</span>
+      <span class="tag tag-jailbreak">jailbreak-defense</span>
+    </div>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-title">📊 数据源</div>
+    <p class="muted">· arxiv <code>co:</code> 顶会标注</p>
+    <p class="muted">· 关键词检索（jailbreak / privacy / ...）</p>
+    <p class="muted">· Semantic Scholar 机构补全</p>
+  </div>
+
+  <div class="sidebar-section">
+    <div class="sidebar-title">🛠 技术栈</div>
+    <p class="muted">· Hermes Agent + cron</p>
+    <p class="muted">· arxiv / Semantic Scholar / OpenReview API</p>
+    <p class="muted">· KaTeX (LaTeX 公式渲染)</p>
+    <p class="muted">· Playwright (顶会 proceedings 抓取)</p>
+  </div>
+</nav>
+
+  </aside>
+  <main class="main">
+    
+<header class="content-header">
+  <div class="date-badge">📅 Today</div>
+  <h1 class="page-title">LLM Security Digest</h1>
+  <p class="lead">Daily LLM Security papers — top venue & arxiv, bilingual EN/ZH summaries</p>
+  <div class="quick-stats">
+    <span class="stat"><strong>1</strong> days</span>
+    <span class="stat"><strong>20</strong> papers indexed</span>
+    <span class="stat"><strong>1</strong> deep notes</span>
+    <span class="stat"><strong>EN+ZH</strong> bilingual</span>
+  </div>
+</header>
+
+<section class="section">
+  <h2 class="section-title">📅 Latest Digests</h2>
+  <div class="card-grid">
+
+    <a class="day-card" href="digest/2026-08-02.html">
+      <div class="day-date">2026-08-02</div>
+      <div class="day-count">20 papers</div>
+      <div class="day-arrow">→</div>
+    </a>
+
+  </div>
+</section>
+
+<section class="section">
+  <h2 class="section-title">📄 Latest Notes</h2>
+  <div class="card-grid">
+
+    <a class="day-card note-card" href="notes/usenix-security/llm-jailbreak/2404.01833_crescendo.html">
+      <div class="day-date">Great, Now Write an Article About That: The Crescendo Multi-Turn LLM Jailbreak Attack</div>
+      <div class="day-count">USENIX · 2404.01833</div>
+      <div class="day-arrow">→</div>
+    </a>
+
+  </div>
+</section>
+
+  </main>
 </div>
 
-<footer class="site">
-  自动构建于 2026-08-02 11:31 UTC ·
-  <a href="https://github.com/EnlZhao/LLMSecurityDigest">Source on GitHub</a>
+<footer class="site-footer">
+  <div class="footer-inner">
+    <div class="footer-col">
+      <strong>LLM Security Digest</strong>
+      <p class="muted">Daily LLM Security papers · 双语摘要 · Top venue + arXiv</p>
+    </div>
+    <div class="footer-col">
+      <strong>导航</strong>
+      <p><a href="index.html">Home</a> · <a href="archive.html">Archive</a> · <a href="rss.xml">RSS</a> · <a href="https://github.com/EnlZhao/LLMSecurityDigest">GitHub</a></p>
+    </div>
+    <div class="footer-col">
+      <strong>配置</strong>
+      <p class="muted">主方向：<code>LLM as attacker 的静态防御</code></p>
+      <p class="muted">修改：编辑 <code>~/.hermes/profile_user.json</code></p>
+    </div>
+  </div>
 </footer>
+
 </body>
 </html>
