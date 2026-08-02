@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+cache/
+logs/
+run.lock
+.DS_Store
