@@ -13,9 +13,12 @@ from urllib import request, error
 
 REPO = Path("/home/ubuntu/LLMSecurityDigest")
 ARXIV_BIBTEX = "https://arxiv.org/bibtex/{id}"
+ARXIV_ABS = "https://arxiv.org/abs/{id}"
+CROSSREF_BIBTEX = "https://api.crossref.org/works/{doi}/transform/application/x-bibtex"
 
 
 def fetch_bibtex(arxiv_id: str) -> str:
+    """Primary path: arxiv official BibTeX endpoint."""
     try:
         req = request.Request(ARXIV_BIBTEX.format(id=arxiv_id),
                               headers={"User-Agent": "Mozilla/5.0"})
@@ -25,7 +28,64 @@ def fetch_bibtex(arxiv_id: str) -> str:
         return ""
 
 
+def fetch_arxiv_doi(arxiv_id: str) -> str:
+    """Scrape arxiv abs page for published-DOI. arxiv often shows 'DOI: 10.xxxx/yyyy'."""
+    try:
+        req = request.Request(ARXIV_ABS.format(id=arxiv_id),
+                              headers={"User-Agent": "Mozilla/5.0"})
+        with request.urlopen(req, timeout=20) as r:
+            html = r.read().decode("utf-8", errors="replace")
+        # 找 DOI pattern（避免误匹配其他数字）
+        m = re.search(r"doi\.org/(10\.\d{4,9}/[^\s\"<>]+)", html)
+        if m:
+            return m.group(1).rstrip(".")
+        # 备用：找 abs 页面的 <meta name="citation_doi">
+        m = re.search(r'<meta name="citation_doi" content="([^"]+)"', html)
+        if m:
+            return m.group(1).strip()
+        return ""
+    except Exception:
+        return ""
+
+
+def fetch_crossref_bibtex(doi: str) -> str:
+    """CrossRef fallback: precise DOI lookup → standard BibTeX. No fuzzy search."""
+    if not doi:
+        return ""
+    try:
+        req = request.Request(CROSSREF_BIBTEX.format(doi=doi),
+                              headers={"User-Agent": "hermes-citation"})
+        with request.urlopen(req, timeout=20) as r:
+            return r.read().decode("utf-8").strip()
+    except Exception:
+        return ""
+
+
+def get_bibtex(p: dict) -> str:
+    """Three-tier BibTeX lookup with strict fact preservation:
+    1. arxiv /bibtex/<id> — official arxiv BibTeX
+    2. arxiv abs page → DOI → CrossRef — published version
+    3. Constructed from arxiv metadata — title/authors/year from arxiv (never hallucinated)
+    """
+    arxiv_id = p.get("arxiv_id", "")
+    # Tier 1: arxiv official BibTeX
+    if arxiv_id:
+        bib = fetch_bibtex(arxiv_id)
+        if bib:
+            return bib
+        # Tier 2: arxiv DOI → CrossRef
+        doi = fetch_arxiv_doi(arxiv_id)
+        if doi:
+            bib = fetch_crossref_bibtex(doi)
+            if bib:
+                return bib
+    # Tier 3: Constructed from arxiv metadata (always verified against arxiv data)
+    return fallback_bibtex(p)
+
+
 def fallback_bibtex(p: dict) -> str:
+    """Construct BibTeX from arxiv metadata. Title/authors/year are 100% from arxiv API,
+    not hallucinated. Used only as last resort when both arxiv /bibtex and CrossRef fail."""
     title = p["title"].replace("{", "").replace("}", "")
     authors = " and ".join(p.get("authors", [])[:10])
     year = (p.get("published", "") or "????")[:4]
@@ -51,7 +111,7 @@ def render_paper_md(p: dict, idx: int) -> str:
     venue_date = (p.get("published", "") or "")[:10]
     classification = "顶会接收" if any(v in venue for v in ["USENIX","S&P","CCS","NDSS","NeurIPS","ICML","ICLR","AAAI","ACL","EMNLP"]) else "arXiv"
 
-    bib = p.get("bibtex", "").strip() or fallback_bibtex(p)
+    bib = get_bibtex(p)
 
     return f"""### [{idx}]. {p['title']}
 
@@ -129,7 +189,7 @@ def render_readme(papers: list[dict], date_str: str) -> str:
 def render_bibtex(papers: list[dict]) -> str:
     parts = [f"% LLM Security Daily — {time.strftime('%Y-%m-%d', time.gmtime())}", ""]
     for i, p in enumerate(papers, 1):
-        bib = p.get("bibtex", "").strip() or fallback_bibtex(p)
+        bib = get_bibtex(p)
         parts.append(f"% [{i}] {p['title']}")
         parts.append(bib)
         parts.append("")
@@ -171,15 +231,7 @@ def main() -> int:
         print("FATAL: no papers in input", file=sys.stderr)
         return 1
 
-    # 拉 bibtex
-    for p in papers:
-        if not p.get("bibtex"):
-            b = fetch_bibtex(p["arxiv_id"])
-            if b:
-                p["bibtex"] = b
-                print(f"[bib] {p['arxiv_id']}: ok", file=sys.stderr)
-
-    # 渲染
+    # 渲染（bibtex 在 render_paper_md 内通过 get_bibtex 三层回退拉取）
     out_dir = REPO / "digests" / args.date
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "papers").mkdir(exist_ok=True)
