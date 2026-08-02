@@ -3,8 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Archive — LLM Security Digest</title>
+  <title>Daily Papers — LLM Security Digest</title>
   <meta name="description" content="Daily LLM Security papers — top venue & arxiv, bilingual EN/ZH summaries">
+  <meta name="theme-color" content="#f7f8f6">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource-variable/jetbrains-mono@5.2.5/index.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-screen-webfont@1.7.0/lxgwwenkaiscreen.css">
   <link rel="stylesheet" href="assets/style.css">
   
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
@@ -13,53 +17,61 @@
   onload="renderMathInElement(document.body, {delimiters: [{left: '$$', right: '$$', display: true}, {left: '$', right: '$', display: false}], throwOnError: false});"></script>
 
 </head>
-<body class="">
+<body class="archive-page">
+<div class="reading-progress" aria-hidden="true"><span></span></div>
 
 <header class="site-header">
   <div class="header-inner">
-    <a href="index.html" class="brand">
-      <span class="brand-mark">LS</span>
-      <span class="brand-text">LLM Security Digest</span>
+    <a href="index.html" class="brand" aria-label="LLM Security Digest 首页">
+      <span class="brand-mark" aria-hidden="true">L</span>
+      <span class="brand-copy"><span class="brand-text">LLM Security</span><span class="brand-sub">Research Digest</span></span>
     </a>
-    <nav class="primary-nav">
-      <a href="index.html" class="active">Home</a>
-      <a href="archive.html" class="">Archive</a>
+    <button class="nav-toggle" type="button" aria-label="打开导航" aria-expanded="false"><span></span><span></span></button>
+    <nav class="primary-nav" aria-label="主导航">
+      <a href="index.html" class="">首页</a>
+      <a href="archive.html" class="active">Daily Papers</a>
+      <a href="index.html#notes" class="">精读笔记</a>
       <a href="rss.xml">RSS</a>
-      <a href="https://github.com/EnlZhao/LLMSecurityDigest">GitHub</a>
+      <a class="nav-github" href="https://github.com/EnlZhao/LLMSecurityDigest" target="_blank" rel="noreferrer">GitHub ↗</a>
     </nav>
+    <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon">◐</span></button>
   </div>
 </header>
-<div class="single-col">
-<header class="content-header">
-  <h1 class="page-title">Archive</h1>
-  <p class="lead">所有每日摘要，按日期倒序排列</p>
+<main class="archive-main">
+<header class="archive-hero">
+  <div class="eyebrow">DAILY PAPER ARCHIVE</div>
+  <h1>每日论文<br><em>阅读档案</em></h1>
+  <p>按日期浏览所有 LLM Security 日报。每期包含中英文摘要与问题—方法—结果速读。</p>
 </header>
+<div class="archive-toolbar"><span>共 1 期</span><label><span>⌕</span><input id="archive-search" type="search" placeholder="搜索日期…"></label></div>
+<div class="archive-list">
 
-<div class="card-grid">
-
-  <a class="day-card" href="digest/2026-08-02.html">
-    <div class="day-date">2026-08-02</div>
-    <div class="day-count">20 papers</div>
-    <div class="day-arrow">→</div>
+  <a class="archive-row" href="digest/2026-08-02.html" data-archive-date="2026-08-02">
+    <span class="archive-index">01</span>
+    <span class="archive-date"><strong>2026-08-02</strong><small>Sunday</small></span>
+    <span class="archive-meta"><b>20</b> papers</span>
+    <span class="archive-tags"><i>中英双语</i><i>核心总结</i></span>
+    <span class="archive-arrow">↗</span>
   </a>
-</div></div>
+</div></main>
 <footer class="site-footer">
   <div class="footer-inner">
     <div class="footer-col">
-      <strong>LLM Security Digest</strong>
-      <p class="muted">Daily LLM Security papers · 双语摘要 · Top venue + arXiv</p>
+      <a href="index.html" class="footer-brand">LLM Security Digest</a>
+      <p class="muted">LLM Security 论文日报与精读笔记。</p>
     </div>
     <div class="footer-col">
-      <strong>导航</strong>
-      <p><a href="index.html">Home</a> · <a href="archive.html">Archive</a> · <a href="rss.xml">RSS</a> · <a href="https://github.com/EnlZhao/LLMSecurityDigest">GitHub</a></p>
+      <strong>浏览</strong>
+      <p><a href="index.html">首页</a><a href="archive.html">Daily Papers</a><a href="index.html#notes">精读笔记</a></p>
     </div>
     <div class="footer-col">
-      <strong>配置</strong>
-      <p class="muted">主方向：<code>LLM as attacker 的静态防御</code></p>
-      <p class="muted">修改：编辑 <code>~/.hermes/profile_user.json</code></p>
+      <strong>关注方向</strong>
+      <p class="muted">Jailbreak · Prompt Injection · Privacy · Agent Security</p>
     </div>
+    <div class="footer-col footer-meta"><span>Updated daily</span><a href="rss.xml">订阅 RSS ↗</a></div>
   </div>
 </footer>
 
+<script src="assets/site.js"></script>
 </body>
 </html>

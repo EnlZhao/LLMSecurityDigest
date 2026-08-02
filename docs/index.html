@@ -3,8 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>LLM Security Digest — LLM Security Digest</title>
+  <title>LLM Security Digest</title>
   <meta name="description" content="Daily LLM Security papers — top venue & arxiv, bilingual EN/ZH summaries">
+  <meta name="theme-color" content="#f7f8f6">
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource-variable/jetbrains-mono@5.2.5/index.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lxgw-wenkai-screen-webfont@1.7.0/lxgwwenkaiscreen.css">
   <link rel="stylesheet" href="assets/style.css">
   
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
@@ -13,126 +17,125 @@
   onload="renderMathInElement(document.body, {delimiters: [{left: '$$', right: '$$', display: true}, {left: '$', right: '$', display: false}], throwOnError: false});"></script>
 
 </head>
-<body class="">
+<body class="home-page">
+<div class="reading-progress" aria-hidden="true"><span></span></div>
 
 <header class="site-header">
   <div class="header-inner">
-    <a href="index.html" class="brand">
-      <span class="brand-mark">LS</span>
-      <span class="brand-text">LLM Security Digest</span>
+    <a href="index.html" class="brand" aria-label="LLM Security Digest 首页">
+      <span class="brand-mark" aria-hidden="true">L</span>
+      <span class="brand-copy"><span class="brand-text">LLM Security</span><span class="brand-sub">Research Digest</span></span>
     </a>
-    <nav class="primary-nav">
-      <a href="index.html" class="active">Home</a>
-      <a href="archive.html" class="">Archive</a>
+    <button class="nav-toggle" type="button" aria-label="打开导航" aria-expanded="false"><span></span><span></span></button>
+    <nav class="primary-nav" aria-label="主导航">
+      <a href="index.html" class="active">首页</a>
+      <a href="archive.html" class="">Daily Papers</a>
+      <a href="index.html#notes" class="">精读笔记</a>
       <a href="rss.xml">RSS</a>
-      <a href="https://github.com/EnlZhao/LLMSecurityDigest">GitHub</a>
+      <a class="nav-github" href="https://github.com/EnlZhao/LLMSecurityDigest" target="_blank" rel="noreferrer">GitHub ↗</a>
     </nav>
+    <button class="theme-toggle" type="button" aria-label="切换深浅色主题" title="切换主题"><span class="theme-icon">◐</span></button>
   </div>
 </header>
 
-<div class="two-col">
-  <aside class="sidebar">
-    
-<nav class="sidebar-toc">
-  <div class="sidebar-section">
-    <div class="sidebar-title">⚙️ 配置</div>
-    <p class="muted">主方向：<code>LLM as attacker 的静态防御</code></p>
-    <p class="muted">每日 10 篇主方向 + 10 篇大方向</p>
-    <p class="muted">修改：编辑 <code>~/.hermes/profile_user.json</code></p>
-  </div>
-
-  <div class="sidebar-section">
-    <div class="sidebar-title">🏷️ Tags</div>
-    <div class="tag-cloud">
-      <span class="tag">llm-jailbreak</span>
-      <span class="tag">llm-prompt-injection</span>
-      <span class="tag">llm-privacy</span>
-      <span class="tag">llm-backdoor</span>
-      <span class="tag">llm-alignment</span>
-      <span class="tag">llm-agent-security</span>
-      <span class="tag tag-jailbreak">static-defense</span>
-      <span class="tag tag-jailbreak">prompt-injection-defense</span>
-      <span class="tag tag-jailbreak">jailbreak-defense</span>
+<main class="home-main">
+  <section class="home-hero index-hero">
+    <div class="index-intro">
+      <div class="eyebrow">LLM SECURITY DIGEST</div>
+      <h1>Daily Papers</h1>
+      <p>LLM Security 论文日报、双语摘要与精读笔记。</p>
     </div>
-  </div>
-
-  <div class="sidebar-section">
-    <div class="sidebar-title">📊 数据源</div>
-    <p class="muted">· arxiv <code>co:</code> 顶会标注</p>
-    <p class="muted">· 关键词检索（jailbreak / privacy / ...）</p>
-    <p class="muted">· Semantic Scholar 机构补全</p>
-  </div>
-
-  <div class="sidebar-section">
-    <div class="sidebar-title">🛠 技术栈</div>
-    <p class="muted">· Hermes Agent + cron</p>
-    <p class="muted">· arxiv / Semantic Scholar / OpenReview API</p>
-    <p class="muted">· KaTeX (LaTeX 公式渲染)</p>
-    <p class="muted">· Playwright (顶会 proceedings 抓取)</p>
-  </div>
-</nav>
-
-  </aside>
-  <main class="main">
-    
-<header class="content-header">
-  <div class="date-badge">📅 Today</div>
-  <h1 class="page-title">LLM Security Digest</h1>
-  <p class="lead">Daily LLM Security papers — top venue & arxiv, bilingual EN/ZH summaries</p>
-  <div class="quick-stats">
-    <span class="stat"><strong>1</strong> days</span>
-    <span class="stat"><strong>20</strong> papers indexed</span>
-    <span class="stat"><strong>1</strong> deep notes</span>
-    <span class="stat"><strong>EN+ZH</strong> bilingual</span>
-  </div>
-</header>
-
-<section class="section">
-  <h2 class="section-title">📅 Latest Digests</h2>
-  <div class="card-grid">
-
-    <a class="day-card" href="digest/2026-08-02.html">
-      <div class="day-date">2026-08-02</div>
-      <div class="day-count">20 papers</div>
-      <div class="day-arrow">→</div>
+    <a class="today-entry" href="digest/2026-08-02.html" aria-label="进入 2026-08-02 Daily Papers">
+      <span class="today-label"><i></i> TODAY</span>
+      <span class="today-date">2026-08-02</span>
+      <span class="today-meta"><strong>20</strong> 篇论文 <small>中英双语 · 核心总结</small></span>
+      <span class="today-action">进入今日日报 <b>→</b></span>
     </a>
+  </section>
 
-  </div>
-</section>
+  <section class="home-section latest-section" id="latest">
+    <div class="section-heading">
+      <div><span class="section-index">01</span><p class="eyebrow">LATEST DIGEST</p><h2>今日论文速览</h2></div>
+      <a class="text-link" href="digest/2026-08-02.html">查看完整日报 <span>↗</span></a>
+    </div>
+    <div class="latest-layout">
+      <a class="latest-date-card" href="digest/2026-08-02.html">
+        <span class="date-month">2026-08</span>
+        <strong>02</strong>
+        <span class="date-year">2026-08-02 · 20 papers</span>
+        <span class="date-cta">开始阅读 <b>→</b></span>
+      </a>
+      <div class="paper-preview-list">
 
-<section class="section">
-  <h2 class="section-title">📄 Latest Notes</h2>
-  <div class="card-grid">
+        <a class="paper-preview" href="digest/2026-08-02.html#paper-1">
+          <span class="preview-num">01</span>
+          <span class="preview-copy"><span class="preview-topic">Jailbreak &amp; Prompt Injection</span><strong>FragFuse: Bypassing Access Control of Large Language Model Agents via Memory-Based Query Fragmentation and Fusion</strong><small>大语言模型（LLM）智能体（LLM agent）越来越依赖长期记忆（long-term memory）来支持复杂任务执行、用户个性化与领域适配。已有的访问控制机制试图阻断违反策略的请求与滥用。本文揭示了一种由智能体记忆操…</small></span>
+          <span class="preview-arrow">↗</span>
+        </a>
 
-    <a class="day-card note-card" href="notes/usenix-security/llm-jailbreak/2404.01833_crescendo.html">
-      <div class="day-date">Great, Now Write an Article About That: The Crescendo Multi-Turn LLM Jailbreak Attack</div>
-      <div class="day-count">USENIX · 2404.01833</div>
-      <div class="day-arrow">→</div>
-    </a>
+        <a class="paper-preview" href="digest/2026-08-02.html#paper-2">
+          <span class="preview-num">02</span>
+          <span class="preview-copy"><span class="preview-topic">Jailbreak &amp; Prompt Injection</span><strong>AttriGuard: Defeating Indirect Prompt Injection in LLM Agents via Causal Attribution of Tool Invocations</strong><small>LLM 智能体（LLM agents）极易遭受间接提示注入（Indirect Prompt Injection, IPI），攻击者将恶意指令嵌入不可信的工具输出（tool outputs）以劫持执行。现有的多数防御将 I…</small></span>
+          <span class="preview-arrow">↗</span>
+        </a>
 
-  </div>
-</section>
+        <a class="paper-preview" href="digest/2026-08-02.html#paper-3">
+          <span class="preview-num">03</span>
+          <span class="preview-copy"><span class="preview-topic">Jailbreak &amp; Prompt Injection</span><strong>Great, Now Write an Article About That: The Crescendo Multi-Turn LLM Jailbreak Attack</strong><small>大语言模型（LLM）已广泛应用，但被严格对齐（alignment）以拒绝非法或不道德话题。研究者提出的&quot;越狱（jailbreak）&quot;攻击试图缩小模型&quot;能做&quot;与&quot;愿做&quot;之间的差距。本文提出 Crescendo，一种新颖的多…</small></span>
+          <span class="preview-arrow">↗</span>
+        </a>
 
-  </main>
-</div>
+        <a class="paper-preview" href="digest/2026-08-02.html#paper-4">
+          <span class="preview-num">04</span>
+          <span class="preview-copy"><span class="preview-topic">Jailbreak &amp; Prompt Injection</span><strong>Hijacking Large Audio-Language Models via Context-Agnostic and Imperceptible Auditory Prompt Injection</strong><small>现代大型音频-语言模型（LALMs）通过紧密融合音频与文本来支撑智能语音交互，但其集成方式也将攻击面扩展到连续、高维的音频通道。现有工作多研究音频越狱，对恶意音频注入与下游行为操控的安全风险探讨不足。本文揭示了一种被忽视…</small></span>
+          <span class="preview-arrow">↗</span>
+        </a>
+
+      </div>
+    </div>
+  </section>
+
+  <section class="home-section" id="notes">
+    <div class="section-heading">
+      <div><span class="section-index">02</span><p class="eyebrow">DEEP READING</p><h2>精读笔记</h2></div>
+      <p class="section-desc">从“知道这篇论文”到真正理解它的机制、实验与局限。</p>
+    </div>
+    <div class="notes-grid">
+
+      <a class="note-card" href="notes/usenix-security/llm-jailbreak/2404.01833_crescendo.html">
+        <span class="note-type">PAPER NOTE</span>
+        <h3>Great, Now Write an Article About That: The Crescendo Multi-Turn LLM Jailbreak Attack</h3>
+        <p>USENIX · arXiv 2404.01833</p>
+        <span class="note-read">阅读全文 <b>↗</b></span>
+      </a>
+
+    </div>
+  </section>
+
+  <section class="topic-band">
+    <div><span class="eyebrow">FOCUS AREAS</span><h2>持续追踪六个<br>LLM 安全方向</h2></div>
+    <div class="topic-list"><span>Jailbreak</span><span>Prompt Injection</span><span>Privacy</span><span>Backdoor</span><span>Alignment</span><span>Agent Security</span></div>
+  </section>
+</main>
 
 <footer class="site-footer">
   <div class="footer-inner">
     <div class="footer-col">
-      <strong>LLM Security Digest</strong>
-      <p class="muted">Daily LLM Security papers · 双语摘要 · Top venue + arXiv</p>
+      <a href="index.html" class="footer-brand">LLM Security Digest</a>
+      <p class="muted">LLM Security 论文日报与精读笔记。</p>
     </div>
     <div class="footer-col">
-      <strong>导航</strong>
-      <p><a href="index.html">Home</a> · <a href="archive.html">Archive</a> · <a href="rss.xml">RSS</a> · <a href="https://github.com/EnlZhao/LLMSecurityDigest">GitHub</a></p>
+      <strong>浏览</strong>
+      <p><a href="index.html">首页</a><a href="archive.html">Daily Papers</a><a href="index.html#notes">精读笔记</a></p>
     </div>
     <div class="footer-col">
-      <strong>配置</strong>
-      <p class="muted">主方向：<code>LLM as attacker 的静态防御</code></p>
-      <p class="muted">修改：编辑 <code>~/.hermes/profile_user.json</code></p>
+      <strong>关注方向</strong>
+      <p class="muted">Jailbreak · Prompt Injection · Privacy · Agent Security</p>
     </div>
+    <div class="footer-col footer-meta"><span>Updated daily</span><a href="rss.xml">订阅 RSS ↗</a></div>
   </div>
 </footer>
 
+<script src="assets/site.js"></script>
 </body>
 </html>
