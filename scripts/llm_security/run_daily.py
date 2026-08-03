@@ -336,7 +336,7 @@ def command_doctor(args: argparse.Namespace) -> int:
             checks.append({"name": name, "status": "ok", "http_status": response.status})
         except Exception as exc:
             checks.append({"name": name, "status": "error", "error_type": type(exc).__name__})
-    openreview_source = OpenReviewSource()
+    openreview_source = OpenReviewSource(http_client=client)
     try:
         checks.append({"name": "openreview", **openreview_source.probe("ICLR.cc/2025/Conference")})
     except Exception as exc:

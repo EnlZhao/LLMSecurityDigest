@@ -30,15 +30,22 @@ def test_doctor_does_not_require_optional_serpapi_key(monkeypatch, tmp_path, cap
         def get(self, url, **_kwargs):
             return HttpResponse(url=url, final_url=url, status=200, headers={}, body=b"{}")
 
+    client = Client()
+    openreview_clients = []
+
     class OpenReview:
+        def __init__(self, *, http_client):
+            openreview_clients.append(http_client)
+
         def probe(self, _venue_id):
             return {"status": "ok", "http_status": 200}
 
-    monkeypatch.setattr(daily, "default_client", lambda: Client())
+    monkeypatch.setattr(daily, "default_client", lambda: client)
     monkeypatch.setattr(daily, "OpenReviewSource", OpenReview)
     monkeypatch.delenv("SERPAPI_API_KEY", raising=False)
 
     assert daily.command_doctor(argparse.Namespace(data_dir=str(tmp_path))) == 0
+    assert openreview_clients == [client]
     payload = json.loads(capsys.readouterr().out)
     assert next(item for item in payload["checks"] if item["name"] == "serpapi") == {
         "name": "serpapi",
@@ -61,11 +68,17 @@ def test_baseline_cli_workflow_is_bounded_and_authoritative(monkeypatch, tmp_pat
         def get(self, url, **_kwargs):
             return HttpResponse(url=url, final_url=url, status=200, headers={}, body=b"{}")
 
+    doctor_client = MockClient()
+    openreview_clients = []
+
     class MockDoctorOpenReview:
+        def __init__(self, *, http_client):
+            openreview_clients.append(http_client)
+
         def probe(self, _venue_id):
             return {"status": "ok", "http_status": 200}
 
-    monkeypatch.setattr(daily, "default_client", lambda: MockClient())
+    monkeypatch.setattr(daily, "default_client", lambda: doctor_client)
     monkeypatch.setattr(daily, "OpenReviewSource", MockDoctorOpenReview)
     monkeypatch.setattr(pipeline, "default_client", lambda: MockClient())
 
@@ -74,6 +87,7 @@ def test_baseline_cli_workflow_is_bounded_and_authoritative(monkeypatch, tmp_pat
         return daily.main()
 
     assert invoke("doctor") == 0
+    assert openreview_clients == [doctor_client]
     doctor = json.loads(capsys.readouterr().out)
     assert all(check["status"] in {"ok", "optional_missing"} for check in doctor["checks"])
     assert data_dir.exists()
