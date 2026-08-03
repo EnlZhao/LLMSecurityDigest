@@ -997,11 +997,11 @@ class OpenReviewSource:
             try:
                 client = self.client_factory.get(version)
                 # The two official client generations expose different
-                # venue filters: v2 accepts structured ``content`` while
-                # v1 accepts the venue invitation directly.  Passing the v2
-                # keyword to v1 raises TypeError before any network request,
-                # making the compatibility path appear to work while never
-                # reaching older OpenReview deployments.
+                # venue filters: v2 accepts structured ``content`` while v1
+                # requires the registered venue's ``/-/Submission``
+                # invitation. Passing the v2 keyword to v1 raises TypeError
+                # before any network request, making the compatibility path
+                # appear to work while never reaching older deployments.
                 client_params: dict[str, Any] = {}
                 if "content.venueid" in params:
                     if version == "v2":
@@ -1109,14 +1109,13 @@ class OpenReviewSource:
         provenance = _provenance(response, source="openreview_api")
         for note in notes:
             content = note.get("content") or {}
-            if not _text(content.get("title")):
+            if not OpenReviewSource._is_root_candidate(note):
                 continue
-            if OpenReviewSource._is_root_candidate(note):
-                root_forum = _text(note.get("forum") or note.get("id"))
-                if root_forum and root_forum in seen_root_forums:
-                    continue
-                if root_forum:
-                    seen_root_forums.add(root_forum)
+            root_forum = _text(note.get("forum") or note.get("id"))
+            if root_forum and root_forum in seen_root_forums:
+                continue
+            if root_forum:
+                seen_root_forums.add(root_forum)
             assigned_venue_id = _text(content.get("venueid"))
             venue_text = _text(content.get("venue"))
             requested_spec = get_venue_spec(venue_id)
@@ -1427,11 +1426,11 @@ class CrossrefSource:
                     break
             published_parts = ((item.get("published") or {}).get("date-parts") or [[]])[0]
             published_at = None
-            if published_parts:
+            if len(published_parts) >= 3:
                 try:
                     year = int(published_parts[0])
-                    month = int(published_parts[1]) if len(published_parts) > 1 else 1
-                    day = int(published_parts[2]) if len(published_parts) > 2 else 1
+                    month = int(published_parts[1])
+                    day = int(published_parts[2])
                     published_at = datetime(year, month, day, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
                 except (TypeError, ValueError, OverflowError):
                     published_at = None

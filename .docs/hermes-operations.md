@@ -263,9 +263,16 @@ an alternate identifier. An arXiv `journal_ref` alone never changes
 
 `materialize` re-fetches authoritative BibTeX, downloads the official body,
 checks the PDF/HTML identity against the frozen title, and stores content
-under the configured data directory. Only records passing `validate_materialized`
-are written to `facts.json`. Renderers read this file offline; they do not
-repair missing fields.
+under the configured data directory. The refreshed title, each author
+identity, and present DOI must also agree with the deterministic discovery
+record; disagreement rejects the record instead of allowing a wrong official
+page to inherit a selected source ID. BibTeX must reproduce the authoritative
+title and each author identity (a matching surname alone is insufficient). An
+arXiv BibTeX record without `eprint` must carry the exact ID in an HTTPS
+`arxiv.org` `abs` or `pdf` URL. Partial Crossref dates remain unknown rather
+than becoming a fabricated first day of a month or year. Only records passing
+`validate_materialized` are written to `facts.json`. Renderers read this file
+offline; they do not repair missing fields.
 
 ## Commands on the headless server
 

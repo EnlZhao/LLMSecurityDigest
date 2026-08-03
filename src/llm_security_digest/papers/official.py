@@ -31,6 +31,8 @@ _OFFICIAL_PDF_HOSTS = {
     "eccv": frozenset({"www.ecva.net"}),
 }
 
+_DOI_RE = re.compile(r"^10\.\d{4,9}/[-._;()/:A-Z0-9]+$", re.IGNORECASE)
+
 
 class _Node:
     def __init__(self, tag: str = "root", attrs: dict[str, str] | None = None):
@@ -260,12 +262,12 @@ def _bibtex_inline(root: _Node) -> str:
 def _doi(root: _Node) -> str | None:
     for value in _meta(root, "citation_doi") + _meta(root, "dc.identifier"):
         doi = normalize_doi(value.replace("doi:", "").strip())
-        if doi.startswith("10."):
+        if _DOI_RE.fullmatch(doi):
             return doi
     for _, href in _hrefs(root):
         if "doi.org/" in href.casefold():
             doi = normalize_doi(href.rsplit("/", 1)[-1])
-            if doi.startswith("10."):
+            if _DOI_RE.fullmatch(doi):
                 return doi
     return None
 
@@ -960,7 +962,7 @@ class ECVAAdapter(OfficialAdapter):
             match = re.search(r"(10\.\d{4,9}/[^?#\s]+)", parsed.path)
             if match:
                 value = normalize_doi(match.group(1))
-                if value.startswith("10."):
+                if _DOI_RE.fullmatch(value):
                     return value
         return None
 

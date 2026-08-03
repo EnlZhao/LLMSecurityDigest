@@ -279,8 +279,20 @@ def validate_bibtex(paper: PaperFacts, bibtex: str) -> None:
     if paper.source == "arxiv":
         eprint = _extract_bibtex_field(bibtex, "eprint")
         url = _extract_bibtex_field(bibtex, "url")
-        if not eprint and paper.source_id not in url:
-            raise ValueError("BibTeX does not identify the arXiv paper")
+        if not eprint:
+            parsed_url = parse.urlsplit(url)
+            path_match = re.fullmatch(
+                r"/(?:abs|pdf)/((?:\d{4}\.\d{4,5}|[a-z][a-z-]+/\d{7})(?:v\d+)?)(?:\.pdf)?/?",
+                parsed_url.path,
+                flags=re.IGNORECASE,
+            )
+            if (
+                parsed_url.scheme != "https"
+                or (parsed_url.hostname or "").casefold().rstrip(".") != "arxiv.org"
+                or not path_match
+                or re.sub(r"v\d+$", "", path_match.group(1), flags=re.IGNORECASE) != paper.source_id
+            ):
+                raise ValueError("BibTeX does not identify the arXiv paper")
         if eprint and re.sub(r"v\d+$", "", eprint) != paper.source_id:
             raise ValueError("BibTeX arXiv id does not match authoritative metadata")
 
@@ -340,9 +352,33 @@ def _authors_match(source_authors: list[str], bib_authors: list[str]) -> bool:
     bib_full = sorted(_author_full_key(author) for author in bib_authors)
     if source_full and source_full == bib_full and all(source_full):
         return True
-    source_families = sorted(_author_family(author) for author in source_authors)
-    bib_families = sorted(_author_family(author) for author in bib_authors)
-    return bool(source_families) and source_families == bib_families and all(source_families)
+    source_by_family: dict[str, list[str]] = {}
+    bib_by_family: dict[str, list[str]] = {}
+    for author in source_authors:
+        source_by_family.setdefault(_author_family(author), []).append(author)
+    for author in bib_authors:
+        bib_by_family.setdefault(_author_family(author), []).append(author)
+    if not source_by_family or set(source_by_family) != set(bib_by_family):
+        return False
+    for family, source_values in source_by_family.items():
+        bib_values = bib_by_family[family]
+        if not family or len(source_values) != len(bib_values):
+            return False
+        source_initials = sorted(_author_initials(author) for author in source_values)
+        bib_initials = sorted(_author_initials(author) for author in bib_values)
+        if not all(source_initials) or not all(bib_initials) or source_initials != bib_initials:
+            return False
+    return True
+
+
+def _author_initials(value: str) -> str:
+    value = value.strip().strip("{}").strip()
+    if "," in value:
+        _family, given = value.split(",", 1)
+    else:
+        parts = value.split()
+        given = " ".join(parts[:-1])
+    return "".join(part[0].casefold() for part in re.findall(r"[A-Za-z0-9]+", given) if part)
 
 
 def _bibtex_entries(value: str) -> list[str]:
@@ -604,6 +640,10 @@ def refresh_authoritative(paper: PaperFacts, *, client: HttpClient) -> PaperFact
         raise ValueError(
             f"authoritative identity mismatch: expected {paper.paper_id}, got {refreshed.paper_id}"
         )
+    if normalize_title(refreshed.title) != normalize_title(paper.title) or not _authors_match(paper.authors, refreshed.authors):
+        raise ValueError("authoritative refresh metadata does not match the discovered record")
+    if paper.doi and normalize_doi(refreshed.doi or "") != normalize_doi(paper.doi):
+        raise ValueError("authoritative refresh DOI does not match the discovered record")
     # Dynamic marker is intentionally excluded from PaperFacts.to_dict(); it
     # only lets the citation layer distinguish a refreshed source record from
     # an untrusted candidate object in this process.

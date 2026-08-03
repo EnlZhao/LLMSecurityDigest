@@ -320,6 +320,8 @@ class PaperFacts:
             raise ValueError(f"{self.paper_id}: accepted/published paper has no venue")
         if not self.landing_url.startswith("https://") or not self.pdf_url.startswith("https://"):
             raise ValueError(f"{self.paper_id}: non-HTTPS paper URL")
+        if self.doi and not re.fullmatch(r"10\.\d{4,9}/[-._;()/:A-Z0-9]+", normalize_doi(self.doi), re.IGNORECASE):
+            raise ValueError(f"{self.paper_id}: invalid DOI")
         if self.collection_tier not in {"unknown", "formal", "arxiv_fallback"}:
             raise ValueError(f"{self.paper_id}: invalid collection tier")
         if self.match_state not in {"unknown", "canonical", "matched", "unmatched", "unresolved"}:
