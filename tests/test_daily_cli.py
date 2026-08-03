@@ -3,11 +3,15 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
+from llm_security_digest.papers import pipeline
+from llm_security_digest.papers.content import persist_content
 from llm_security_digest.papers.http import HttpResponse
+from llm_security_digest.papers.models import DiscoveryResult, PaperFacts
 
 
 def _daily_module():
@@ -40,6 +44,234 @@ def test_doctor_does_not_require_optional_serpapi_key(monkeypatch, tmp_path, cap
         "name": "serpapi",
         "status": "optional_missing",
     }
+
+
+def test_baseline_cli_workflow_is_bounded_and_authoritative(monkeypatch, tmp_path, capsys) -> None:
+    daily = _daily_module()
+    data_dir = tmp_path / "llmsd-data"
+    plan_path = tmp_path / "plan.json"
+    candidates_path = tmp_path / "candidates.json"
+    selection_path = tmp_path / "selection.json"
+    facts_path = tmp_path / "facts.json"
+    manifest_path = tmp_path / "manifest.json"
+    monkeypatch.setenv("LLMSD_DATA_DIR", str(data_dir))
+    monkeypatch.delenv("SERPAPI_API_KEY", raising=False)
+
+    class MockClient:
+        def get(self, url, **_kwargs):
+            return HttpResponse(url=url, final_url=url, status=200, headers={}, body=b"{}")
+
+    class MockDoctorOpenReview:
+        def probe(self, _venue_id):
+            return {"status": "ok", "http_status": 200}
+
+    monkeypatch.setattr(daily, "default_client", lambda: MockClient())
+    monkeypatch.setattr(daily, "OpenReviewSource", MockDoctorOpenReview)
+    monkeypatch.setattr(pipeline, "default_client", lambda: MockClient())
+
+    def invoke(*argv: str) -> int:
+        monkeypatch.setattr(sys, "argv", ["run_daily.py", *argv])
+        return daily.main()
+
+    assert invoke("doctor") == 0
+    doctor = json.loads(capsys.readouterr().out)
+    assert all(check["status"] in {"ok", "optional_missing"} for check in doctor["checks"])
+    assert data_dir.exists()
+
+    assert invoke("init-plan", "--out", str(plan_path)) == 0
+    capsys.readouterr()
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    assert plan["target"] == 10
+
+    def make_candidate(index: int) -> PaperFacts:
+        doi = f"10.1234/fixture-{index:02d}"
+        return PaperFacts(
+            paper_id=f"doi:{doi}",
+            source="crossref",
+            source_id=doi,
+            title=f"Security Fixture Paper {index}",
+            authors=["Alice Example"],
+            abstract=f"LLM_FACT_INJECTION_{index} security candidate abstract",
+            publication_status="published",
+            venue="ieee-sp",
+            published_at="2026-01-02T00:00:00Z",
+            updated_at=None,
+            doi=doi,
+            landing_url=f"https://doi.org/{doi}",
+            pdf_url=f"https://ieeexplore.ieee.org/document/{index}.pdf",
+            source_comment=f"LLM_FACT_INJECTION_COMMENT_{index}",
+            source_metadata={"llm_fact": f"LLM_FACT_INJECTION_METADATA_{index}"},
+            collection_tier="formal",
+            match_state="canonical",
+        )
+
+    candidate_papers = [make_candidate(index) for index in range(10)]
+
+    class MockSource:
+        name = "mock"
+
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def discover_result(self, _plan):
+            return DiscoveryResult(
+                reports=[{"source": self.name, "adapter": "mock", "status": "ok"}]
+            )
+
+    class MockOfficialSource(MockSource):
+        name = "official"
+
+        def discover_result(self, _plan):
+            return DiscoveryResult(
+                papers=list(candidate_papers),
+                reports=[{"source": self.name, "adapter": "mock", "status": "ok"}],
+            )
+
+    class MockOpenReviewSource(MockSource):
+        name = "openreview"
+
+    class MockCrossrefSource(MockSource):
+        name = "crossref"
+
+    class MockIeeeSource(MockSource):
+        name = "ieee_xplore"
+
+    class MockArxivSource(MockSource):
+        name = "arxiv"
+
+    monkeypatch.setattr(pipeline, "OfficialSource", MockOfficialSource)
+    monkeypatch.setattr(pipeline, "OpenReviewSource", MockOpenReviewSource)
+    monkeypatch.setattr(pipeline, "CrossrefSource", MockCrossrefSource)
+    monkeypatch.setattr(pipeline, "IeeeXploreSource", MockIeeeSource)
+    monkeypatch.setattr(pipeline, "ArxivSource", MockArxivSource)
+
+    assert invoke(
+        "collect",
+        "--plan",
+        str(plan_path),
+        "--out",
+        str(candidates_path),
+    ) == 0
+    capsys.readouterr()
+    candidates_payload = json.loads(candidates_path.read_text(encoding="utf-8"))
+    assert candidates_payload["total"] == 10
+    assert candidates_payload["plan"]["target"] == 10
+    assert len(candidates_payload["candidates"]) == 10
+
+    selections = {
+        "selections": [
+            {
+                "paper_id": paper.paper_id,
+                "score": float(10 - index),
+                "category": "Security",
+                "reason": "script-owned fixture ranking",
+                "track": "core" if index < 5 else "broad",
+            }
+            for index, paper in enumerate(candidate_papers)
+        ]
+    }
+    selection_path.write_text(json.dumps(selections), encoding="utf-8")
+
+    def mock_refresh(paper: PaperFacts, *, client) -> PaperFacts:
+        index = int(paper.source_id.rsplit("-", 1)[-1])
+        return PaperFacts(
+            paper_id=paper.paper_id,
+            source=paper.source,
+            source_id=paper.source_id,
+            title=paper.title,
+            authors=list(paper.authors),
+            abstract=f"Authoritative abstract {index}.",
+            publication_status="published",
+            venue="IEEE Symposium on Security and Privacy",
+            published_at=paper.published_at,
+            updated_at=paper.updated_at,
+            doi=paper.doi,
+            landing_url=paper.landing_url,
+            pdf_url=paper.pdf_url,
+            collection_tier="formal",
+            match_state="canonical",
+        )
+
+    def mock_bibtex(paper: PaperFacts, *, client):
+        value = (
+            f"@article{{fixture, title={{{paper.title}}}, author={{Example, Alice}}, "
+            f"doi={{{paper.doi}}}}}"
+        )
+        return value, paper.landing_url, {"source": "mock"}
+
+    def mock_fulltext(paper: PaperFacts, *, client, data_dir: Path, max_bytes: int):
+        intro = f"{paper.title}\nIntroduction\nVerified security text for {paper.paper_id}."
+        methods = "\nMethods\nThe authoritative method confirms security evidence."
+        text = intro + methods
+        return persist_content(
+            data_dir=data_dir,
+            paper_id=paper.paper_id,
+            body=text.encode("utf-8"),
+            extracted_text=text,
+            sections=[
+                {"id": "intro", "title": "Introduction", "offset": 0},
+                {"id": "methods", "title": "Methods", "offset": len(intro)},
+            ],
+            extension="txt",
+            source_url=paper.pdf_url,
+        )
+
+    monkeypatch.setattr(pipeline, "refresh_authoritative", mock_refresh)
+    monkeypatch.setattr(pipeline, "fetch_bibtex", mock_bibtex)
+    monkeypatch.setattr(pipeline, "fetch_fulltext", mock_fulltext)
+
+    assert invoke(
+        "materialize",
+        "--candidates",
+        str(candidates_path),
+        "--selection",
+        str(selection_path),
+        "--facts",
+        str(facts_path),
+        "--manifest",
+        str(manifest_path),
+    ) == 0
+    capsys.readouterr()
+    facts = json.loads(facts_path.read_text(encoding="utf-8"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert facts["total"] == 10
+    assert manifest["collection"]["track_counts"] == {"core": 5, "broad": 5}
+    assert manifest["collection"]["track_limits"] == {"core": 5, "broad": 5}
+    assert all(
+        "LLM_FACT_INJECTION" not in json.dumps(paper)
+        for paper in facts["papers"]
+    )
+    assert all(paper["abstract"].startswith("Authoritative abstract") for paper in facts["papers"])
+
+    first_id = candidate_papers[0].paper_id
+    assert invoke("outline", "--facts", str(facts_path), "--paper-id", first_id) == 0
+    outline = json.loads(capsys.readouterr().out)
+    assert [section["id"] for section in outline] == ["intro", "methods"]
+
+    assert invoke(
+        "read-section",
+        "--facts",
+        str(facts_path),
+        "--paper-id",
+        first_id,
+        "--section-id",
+        "intro",
+    ) == 0
+    section = capsys.readouterr().out
+    assert "Verified security text" in section
+
+    assert invoke(
+        "find",
+        "--facts",
+        str(facts_path),
+        "--paper-id",
+        first_id,
+        "--query",
+        "security",
+    ) == 0
+    matches = json.loads(capsys.readouterr().out)
+    assert matches["paper_id"] == first_id
+    assert matches["matches"]
 
 
 def test_evolution_cli_errors_do_not_echo_exception_details(monkeypatch, tmp_path, capsys) -> None:
