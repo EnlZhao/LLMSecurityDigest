@@ -17,6 +17,7 @@ from llm_security_digest.papers.sources import (
     _is_explicit_final_venue,
     discovery_query_for_general_index,
     reconcile_arxiv_to_formal,
+    trusted_fulltext_url,
 )
 
 
@@ -37,6 +38,34 @@ def _paper(*, paper_id: str, source: str, source_id: str, title: str, authors: l
         pdf_url="https://example.org/paper.pdf",
         collection_tier="formal" if source != "arxiv" else "arxiv_fallback",
         match_state="canonical" if source != "arxiv" else "unmatched",
+    )
+
+
+def _pmlr_paper() -> PaperFacts:
+    return _paper(
+        paper_id="pmlr:abad-rocamora24a:v235",
+        source="pmlr",
+        source_id="abad-rocamora24a:v235",
+        title="PMLR paper",
+        authors=["Alice Example"],
+    )
+
+
+def test_pmlr_raw_pdf_path_requires_matching_volume() -> None:
+    paper = _pmlr_paper()
+
+    assert trusted_fulltext_url(
+        paper,
+        "https://raw.githubusercontent.com/mlresearch/v235/main/assets/abad-rocamora24a/abad-rocamora24a.pdf",
+    )
+
+
+def test_pmlr_raw_pdf_path_rejects_wrong_volume() -> None:
+    paper = _pmlr_paper()
+
+    assert not trusted_fulltext_url(
+        paper,
+        "https://raw.githubusercontent.com/mlresearch/v236/main/assets/abad-rocamora24a/abad-rocamora24a.pdf",
     )
 
 
