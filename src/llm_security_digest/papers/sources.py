@@ -1198,9 +1198,10 @@ class OpenReviewSource:
     def _is_v2_challenge(exc: Exception) -> bool:
         """Return whether a v2 failure may use the bounded HTTP recovery."""
 
-        status = getattr(exc, "status_code", getattr(exc, "code", None))
-        if status == 403:
-            return True
+        # A 403 alone is not sufficient: the shared classifier deliberately
+        # treats plain forbidden/auth responses as authentication failures.
+        # Recovery is reserved for responses explicitly identified as an
+        # anti-bot challenge.
         return openreview_failure_stage(exc, "venue_query") == "challenge"
 
     def _recover_v2_notes(self, params: dict[str, str], *, stage: str) -> HttpResponse | None:

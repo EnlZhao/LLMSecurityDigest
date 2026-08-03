@@ -660,6 +660,40 @@ def test_openreview_v2_challenge_uses_fixed_http_recovery_and_keeps_evidence() -
     assert recovery.calls[0][1]["allowed_hosts"] == {"api2.openreview.net"}
 
 
+@pytest.mark.parametrize("message", ["Forbidden", "authentication required"])
+def test_openreview_v2_auth_403_does_not_trigger_http_recovery(message: str) -> None:
+    class Auth403Error(Exception):
+        code = 403
+
+    class V2:
+        def get_notes(self, **_kwargs):
+            raise Auth403Error(message)
+
+    class V1:
+        def get_notes(self, **_kwargs):
+            return [{"id": "legacy-paper", "content": {"title": "Paper"}}]
+
+    class Factory:
+        def get(self, version: str):
+            return V2() if version == "v2" else V1()
+
+    class RecoveryClient:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            raise AssertionError("auth/forbidden 403 must not invoke v2 recovery")
+
+    recovery = RecoveryClient()
+    report = OpenReviewSource(Factory(), http_client=recovery).probe("ICLR.cc/2025/Conference")
+
+    assert report["status"] == "partial"
+    assert report["client_version"] == "v1"
+    assert report["fallback_errors"][0]["stage"] == "auth"
+    assert recovery.calls == []
+
+
 @pytest.mark.parametrize(
     "body",
     [b"not-json", json.dumps({"notes": {"id": "wrong-shape"}}).encode()],

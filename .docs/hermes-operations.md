@@ -79,7 +79,13 @@ container titles. The formal tier is routed to deterministic adapters in
   is explicit (`limit`/`offset`), and structured `Note` objects plus decision
   replies are normalized by the baseline parser. The assigned venue and
   decision replies are checked; a loose string such as "accepted" in
-  unrelated content is not sufficient. Optional headless credentials are
+  unrelated content is not sufficient. If and only if the v2 client reports
+  an explicit anti-bot challenge, the baseline may use the same bounded HTTP
+  broker to request the fixed `https://api2.openreview.net/notes` endpoint.
+  That response is required to be JSON with a list of note objects and then
+  follows the same deterministic parser; it never writes facts directly. A
+  plain 403, authentication, or forbidden error cannot use this route.
+  Optional headless credentials are
   read only from `OPENREVIEW_USERNAME` and `OPENREVIEW_PASSWORD`; anonymous
   access is attempted when they are absent. Login, MFA, challenge, and
   authorization failures remain visible in the source report with their

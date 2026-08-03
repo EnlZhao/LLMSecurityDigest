@@ -138,8 +138,11 @@ URL 的标题、短文本和相对链接 evidence，最多十个 URL，明确写
 `LLMSD_HEADLESS_FALLBACK=1` 启用可选的 Playwright raw-response fallback：
 浏览器只访问显式 allowlisted HTTPS host，校验每次 redirect，限制总超时和
 响应字节，并返回原始 HTML/JSON/PDF bytes、最终 URL、状态和 SHA-256
-provenance。默认仍关闭，OpenReview 仍只走官方 client；浏览器 bytes 会重新
-交给现有 deterministic adapter/parser/validator，永远不会直接生成
+provenance。默认仍关闭；OpenReview 仍以官方 v2 client 为主，只有该 client
+明确报告 anti-bot challenge 时，才可通过同一 broker 向固定的
+`api2.openreview.net/notes` 获取受限 raw JSON。普通 403 auth/forbidden
+绝不能触发这个路径。浏览器 bytes 会重新交给现有 deterministic
+adapter/parser/validator，永远不会直接生成
 `PaperFacts` 或 `facts.json`。独立导出 raw artifact 可使用：
 `python scripts/llm_security/headless_discover.py --raw --input RUN/browser-request.json --out RUN/browser-raw.json`。
 `paper-search-mcp` may be used only as a discovery/reference pattern; it is
@@ -185,6 +188,10 @@ never a fact authority for title, authors, abstract, venue, URLs, or BibTeX.
   ten-paper and five-per-track limits without allowing LLM fields into facts.
 - The `core` track is tied to plan-owned `core_keywords`: an unrelated
   candidate cannot be promoted to the five-paper core quota by an LLM label.
+- OpenReview v2 remains the primary client. An explicitly classified anti-bot
+  challenge may use only the fixed, allowlisted `api2.openreview.net` raw
+  response recovery path; plain 403 authentication or forbidden errors stay
+  on the visible official-client compatibility path and cannot invoke it.
 
 ## 站点
 
