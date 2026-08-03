@@ -751,12 +751,6 @@ def materialize(
                 "evidence": paper.unresolved_evidence,
             })
             continue
-        if selection.track == "core" and core_keywords and not _matches_keywords(paper, core_keywords):
-            rejected.append({
-                "paper_id": paper.paper_id,
-                "reason": "core_keyword_mismatch",
-            })
-            continue
         if track_counts[selection.track] >= 5:
             rejected.append({
                 "paper_id": paper.paper_id,
@@ -773,6 +767,12 @@ def materialize(
             # and tier/match state. Candidate metadata is never merged into
             # the object that becomes facts.json.
             paper.validate_discovered()
+            if selection.track == "core" and core_keywords and not _matches_keywords(paper, core_keywords):
+                rejected.append({
+                    "paper_id": paper.paper_id,
+                    "reason": "core_keyword_mismatch",
+                })
+                continue
             paper.bibtex, paper.bibtex_url, bib_provenance = fetch_bibtex(paper, client=client)
             paper.provenance["bibtex"] = bib_provenance
             paper.content = fetch_fulltext(paper, client=client, data_dir=data_dir, max_bytes=max_pdf_bytes)

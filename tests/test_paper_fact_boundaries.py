@@ -676,3 +676,50 @@ def test_core_selection_requires_declared_core_keyword(monkeypatch, tmp_path) ->
 
     assert facts["total"] == 0
     assert manifest["rejected"] == [{"paper_id": paper.paper_id, "reason": "core_keyword_mismatch"}]
+
+
+@pytest.mark.parametrize(
+    ("candidate_abstract", "authoritative_abstract", "published"),
+    (
+        ("Injected prompt injection claim.", "Authoritative unrelated abstract.", False),
+        ("Candidate unrelated abstract.", "Authoritative prompt injection abstract.", True),
+    ),
+)
+def test_core_keyword_match_uses_authoritative_abstract(
+    monkeypatch, tmp_path, candidate_abstract: str, authoritative_abstract: str, published: bool,
+) -> None:
+    doi = "10.1234/authoritative-abstract"
+    candidate = _paper(
+        paper_id=f"doi:{doi}", source="crossref", source_id=doi,
+        title="Authoritative title", authors=["Alice Example"], doi=doi,
+    )
+    candidate.abstract = candidate_abstract
+    authoritative = _paper(
+        paper_id=f"doi:{doi}", source="crossref", source_id=doi,
+        title="Authoritative title", authors=["Alice Example"], doi=doi,
+    )
+    authoritative.abstract = authoritative_abstract
+    monkeypatch.setattr(pipeline, "refresh_authoritative", lambda *_args, **_kwargs: authoritative)
+    monkeypatch.setattr(pipeline, "fetch_bibtex", lambda paper, **_kwargs: (
+        f"@article{{test, title={{{paper.title}}}, author={{Alice Example}}}}",
+        "https://doi.org/example",
+        {},
+    ))
+    monkeypatch.setattr(pipeline, "fetch_fulltext", lambda *_args, **_kwargs: {"sha256": "a" * 64, "path": "content.txt"})
+
+    facts, manifest = pipeline.materialize(
+        candidates_payload={
+            "candidates": [candidate.to_dict()],
+            "plan": {"core_keywords": ["prompt injection"]},
+        },
+        selections=[SelectionEntry(candidate.paper_id, 1.0, "Security", "ranked", "core")],
+        data_dir=tmp_path,
+        target=1,
+        scholar_limit=0,
+    )
+
+    assert facts["total"] == int(published)
+    if published:
+        assert manifest["rejected"] == []
+    else:
+        assert manifest["rejected"] == [{"paper_id": candidate.paper_id, "reason": "core_keyword_mismatch"}]
