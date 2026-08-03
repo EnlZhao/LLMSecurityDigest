@@ -81,7 +81,7 @@ ALLOWED_OVERLAY_ROOTS = frozenset({
     "search_plan", "ranking", "source_policy", "source_requests", "reconciliation", "prompt", "reading_skill",
 })
 ALLOWED_SEARCH_PLAN_KEYS = frozenset({
-    "queries_add", "filter_keywords_add", "core_keywords_add", "venue_groups_add", "sources",
+    "queries_add", "filter_keywords_add", "core_keywords_add", "venue_groups_add",
     "openreview_venues", "crossref_venues", "max_results_per_query",
     "max_results_per_venue", "scholar_enrich_limit", "target", "date_from", "date_to",
 })
@@ -494,7 +494,7 @@ def _validate_overlay_shape(overlay: dict[str, Any]) -> None:
             unknown = set(value) - ALLOWED_SEARCH_PLAN_KEYS
             if unknown:
                 raise EvolutionValidationError(f"search_plan overlay fields are not allowed: {sorted(unknown)}")
-            for key in ("queries_add", "filter_keywords_add", "venue_groups_add", "sources"):
+            for key in ("queries_add", "filter_keywords_add", "venue_groups_add"):
                 if key in value:
                     _validate_text_array(value[key], f"search_plan.{key}", max_items=30, max_length=500)
             if "core_keywords_add" in value:
@@ -684,7 +684,9 @@ def _validate_candidate_tests(value: Any, *, required: bool = False) -> list[dic
     return result
 
 
-def validate_overlay(candidate: dict[str, Any], *, require_evidence: bool = False) -> dict[str, Any]:
+def validate_overlay(
+    candidate: dict[str, Any], *, require_evidence: bool = False, allow_legacy_source_overlay: bool = False
+) -> dict[str, Any]:
     """Validate and return a deep-copied strategy candidate."""
     if not isinstance(candidate, dict):
         raise EvolutionValidationError("evolution candidate must be an object")
@@ -703,7 +705,18 @@ def validate_overlay(candidate: dict[str, Any], *, require_evidence: bool = Fals
     overlay = candidate.get("overlay", candidate.get("patch"))
     if not isinstance(overlay, dict):
         raise EvolutionValidationError("candidate must contain an overlay object")
-    _validate_overlay_shape(overlay)
+    # ``sources`` was accepted by schema v2 before it became a protected
+    # baseline policy. Existing immutable manifests must remain auditable, but
+    # their old source list must never affect a future collection run.
+    validation_overlay = overlay
+    search_plan = overlay.get("search_plan")
+    if isinstance(search_plan, dict) and "sources" in search_plan:
+        if not allow_legacy_source_overlay:
+            _validate_overlay_shape(overlay)
+        _validate_text_array(search_plan["sources"], "search_plan.sources", max_items=30, max_length=100)
+        validation_overlay = copy.deepcopy(overlay)
+        validation_overlay["search_plan"].pop("sources")
+    _validate_overlay_shape(validation_overlay)
     # Registered request paths may legitimately contain a year (for example a
     # proceedings volume).  They are still checked for DOI/URL/secret values,
     # while the generic strategy roots retain the anti-hard-coding year gate.
@@ -784,8 +797,12 @@ def validate_overlay(candidate: dict[str, Any], *, require_evidence: bool = Fals
     return result
 
 
-def prepare_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
-    result = validate_overlay(candidate, require_evidence=True)
+def prepare_candidate(candidate: dict[str, Any], *, allow_legacy_source_overlay: bool = False) -> dict[str, Any]:
+    result = validate_overlay(
+        candidate,
+        require_evidence=True,
+        allow_legacy_source_overlay=allow_legacy_source_overlay,
+    )
     if not result.get("version"):
         digest = _sha256(result["overlay"])[:16]
         result["version"] = f"candidate-{digest}"
@@ -806,7 +823,11 @@ def prepare_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
 def apply_overlay(plan: SearchPlan | dict[str, Any], overlay: dict[str, Any] | None) -> SearchPlan:
     """Apply a validated strategy overlay to a plan for the next run."""
     raw = asdict(plan) if isinstance(plan, SearchPlan) else copy.deepcopy(plan)
-    validated = validate_overlay({"overlay": overlay or {}})["overlay"]
+    # Legacy active manifests can retain their original source-list data for
+    # integrity/replay, but this function never applies that deprecated field.
+    validated = validate_overlay(
+        {"overlay": overlay or {}}, allow_legacy_source_overlay=True
+    )["overlay"]
     search = validated.get("search_plan", {})
     for key, target in (
         ("queries_add", "queries"),
@@ -827,7 +848,7 @@ def apply_overlay(plan: SearchPlan | dict[str, Any], overlay: dict[str, Any] | N
                     seen.add(normalize_overlay_text(value))
             raw[target] = existing
     for key in (
-        "sources", "openreview_venues", "crossref_venues", "date_from", "date_to",
+        "openreview_venues", "crossref_venues", "date_from", "date_to",
         "max_results_per_query", "max_results_per_venue", "scholar_enrich_limit", "target",
     ):
         if key in search:
@@ -1434,9 +1455,9 @@ class EvolutionStore:
         if path.name == "manifest.json" and path.parent.parent == self.paths.candidates:
             # This is a legacy flat candidate named manifest.json in an old
             # manually-created directory; treat it as its own JSON artifact.
-            return prepare_candidate(raw)
+            return prepare_candidate(raw, allow_legacy_source_overlay=True)
         if path.name != "manifest.json" or "overlay" not in raw:
-            return prepare_candidate(raw)
+            return prepare_candidate(raw, allow_legacy_source_overlay=True)
         candidate = {key: value for key, value in raw.items() if key in _ALLOWED_TOP_LEVEL}
         reflection_path = path.parent / "reflection.json"
         root_cause_path = path.parent / "root-cause.md"
@@ -1447,7 +1468,7 @@ class EvolutionStore:
             candidate["root_cause_md"] = root_cause_path.read_text(encoding="utf-8")
         if tests_path.exists():
             candidate["tests"] = json.loads(tests_path.read_text(encoding="utf-8"))
-        return prepare_candidate(candidate)
+        return prepare_candidate(candidate, allow_legacy_source_overlay=True)
 
     def _load_active_manifest(self, version: str) -> dict[str, Any]:
         if not isinstance(version, str) or not _VERSION_RE.fullmatch(version):
@@ -1526,7 +1547,7 @@ class EvolutionStore:
         if pointer_static != manifest_static:
             raise EvolutionValidationError("active pointer does not match its immutable version manifest")
         candidate = {key: value for key, value in raw.items() if key != "active_manifest_sha256"}
-        prepared = prepare_candidate(candidate)
+        prepared = prepare_candidate(candidate, allow_legacy_source_overlay=True)
         prepared["active_manifest_sha256"] = manifest_digest
         return prepared
 
@@ -2173,7 +2194,7 @@ def replay_history(root: Path | None = None) -> dict[str, Any]:
                     key: value
                     for key, value in manifest.items()
                     if key not in {"status", "shadow_report"}
-                })
+                }, allow_legacy_source_overlay=True)
                 if event.get("overlay_sha256") != candidate.get("overlay_sha256"):
                     raise EvolutionValidationError("activation history overlay digest does not match immutable manifest")
                 report_path = store._assert_inside_root(Path(str(event.get("shadow_report", ""))))
@@ -2192,7 +2213,7 @@ def replay_history(root: Path | None = None) -> dict[str, Any]:
                         key: value
                         for key, value in manifest.items()
                         if key not in {"status", "shadow_report"}
-                    })
+                    }, allow_legacy_source_overlay=True)
             else:
                 raise EvolutionValidationError("unknown history event")
         except Exception as exc:

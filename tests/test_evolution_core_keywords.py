@@ -21,3 +21,34 @@ def test_core_keywords_add_is_validated_and_applied_additively() -> None:
 def test_core_keywords_add_rejects_invalid_or_oversized_entries(values: list[str]) -> None:
     with pytest.raises(EvolutionValidationError, match="core_keywords_add"):
         validate_overlay({"overlay": {"search_plan": {"core_keywords_add": values}}})
+
+
+@pytest.mark.parametrize(
+    "sources",
+    (
+        ["arxiv"],
+        ["official", "openreview", "arxiv"],
+        ["openreview", "official", "crossref", "arxiv"],
+        ["official", "openreview", "crossref", "ieee_xplore", "arxiv"],
+    ),
+)
+def test_source_overlays_are_rejected(sources: list[str]) -> None:
+    with pytest.raises(EvolutionValidationError, match="search_plan overlay fields are not allowed"):
+        validate_overlay({"overlay": {"search_plan": {"sources": sources}}})
+
+
+def test_apply_overlay_ignores_legacy_source_override() -> None:
+    plan = SearchPlan(queries=["security"])
+    updated = apply_overlay(plan, {"search_plan": {"sources": ["arxiv"]}})
+
+    assert updated.sources == plan.sources
+
+
+def test_legacy_source_overlay_requires_explicit_read_compatibility() -> None:
+    candidate = {"overlay": {"search_plan": {"sources": ["arxiv"]}}}
+
+    with pytest.raises(EvolutionValidationError, match="search_plan overlay fields are not allowed"):
+        validate_overlay(candidate)
+
+    legacy = validate_overlay(candidate, allow_legacy_source_overlay=True)
+    assert legacy["overlay"] == candidate["overlay"]

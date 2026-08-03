@@ -154,6 +154,9 @@ never a fact authority for title, authors, abstract, venue, URLs, or BibTeX.
 
 ### 2026-08-04
 
+- Evolution overlays can no longer change the baseline source list. Historical
+  overlays which carry the retired field remain auditable, but collection
+  ignores it and retains the formal-source-first baseline order.
 - Shared daily queries now retain arXiv field syntax for the Atom API while
   removing those field prefixes for Crossref and IEEE Xplore. This keeps the
   same keywords portable across the registered formal discovery APIs.
