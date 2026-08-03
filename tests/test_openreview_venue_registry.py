@@ -56,6 +56,7 @@ def test_registered_openreview_ids_keep_unicode_and_casefold_normalization(venue
     assert get_registered_openreview_spec(venue) is not None
     _plan(venue).validate()
     validate_overlay(_overlay(venue))
+    validate_overlay(_source_request_overlay(venue))
 
 
 @pytest.mark.parametrize("venue", UNREGISTERED_FAMILY_IDS)
