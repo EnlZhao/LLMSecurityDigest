@@ -135,9 +135,9 @@ def collect(plan: SearchPlan, *, client: HttpClient | None = None) -> dict[str, 
     adapters = {
         "arxiv": ArxivSource(client),
         "official": OfficialSource(client),
-        # OpenReview uses the official openreview-py client factory. It must
-        # not be routed through the generic HTTP client used by other sources.
-        "openreview": OpenReviewSource(),
+        # The official client remains primary. The broker is available only
+        # for its bounded v2 challenge-recovery route.
+        "openreview": OpenReviewSource(http_client=client),
         "crossref": CrossrefSource(client, contact_email=os.getenv("LLMSD_CONTACT_EMAIL")),
         "ieee_xplore": IeeeXploreSource(client),
     }
@@ -654,7 +654,7 @@ def refresh_authoritative(paper: PaperFacts, *, client: HttpClient) -> PaperFact
     if paper.source == "arxiv":
         refreshed = ArxivSource(client).fetch_by_id(paper.source_id)
     elif paper.source == "openreview":
-        refreshed = OpenReviewSource().fetch_by_id(paper.source_id)
+        refreshed = OpenReviewSource(http_client=client).fetch_by_id(paper.source_id)
     elif paper.source == "crossref" and paper.doi:
         refreshed = CrossrefSource(client).fetch_by_doi(paper.doi)
     elif paper.source == "ieee_xplore" and paper.doi:

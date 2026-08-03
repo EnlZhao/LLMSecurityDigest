@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 from urllib import parse
 
-from .http import HttpClient, HttpResponse
+from .http import HttpClient, HttpRequestError, HttpResponse
 from .models import (
     DiscoveryResult,
     PaperFacts,
@@ -71,6 +71,33 @@ def _v1_submission_invitation(venue_id: str) -> str:
     ):
         raise ValueError(f"invalid OpenReview venue id for v1 invitation: {venue_id!r}")
     return f"{value}/-/Submission"
+
+
+_OPENREVIEW_RECOVERY_HOSTS = frozenset({"api2.openreview.net"})
+_OPENREVIEW_RECOVERY_PARAMS = (
+    "content.venueid",
+    "limit",
+    "offset",
+    "details",
+    "id",
+    "forum",
+    "replyto",
+)
+
+
+def _openreview_recovery_url(params: dict[str, str]) -> str:
+    """Build the only HTTP URL allowed for v2 challenge recovery."""
+
+    unknown = set(params) - set(_OPENREVIEW_RECOVERY_PARAMS)
+    if unknown:
+        raise ValueError(f"unsupported OpenReview recovery parameters: {sorted(unknown)}")
+    query = [
+        (key, str(params[key]))
+        for key in _OPENREVIEW_RECOVERY_PARAMS
+        if key in params
+    ]
+    encoded = parse.urlencode(query)
+    return f"{OPENREVIEW_API_URL}?{encoded}" if encoded else OPENREVIEW_API_URL
 
 # These are baseline routing rules.  A candidate may carry a landing URL for
 # display, but materialization derives the request URL from this table and the
@@ -909,8 +936,19 @@ class OfficialSource:
 class OpenReviewSource:
     name = "openreview"
 
-    def __init__(self, client_factory: OpenReviewClientFactory | Any | None = None):
+    def __init__(
+        self,
+        client_factory: OpenReviewClientFactory | Any | None = None,
+        *,
+        http_client: HttpClient | Any | None = None,
+    ):
         self.client_factory = client_factory or OpenReviewClientFactory.from_env()
+        # The optional client is injected by the pipeline so challenge
+        # recovery uses the same bounded HTTP/headless broker as other
+        # sources.  Do not construct a second client here: that would bypass
+        # the process-wide fallback policy and make tests/network behavior
+        # nondeterministic.
+        self.http_client = http_client
         self.errors: list[dict[str, Any]] = []
         self._requests_attempted = 0
         self._requests_succeeded = 0
@@ -1138,9 +1176,68 @@ class OpenReviewSource:
                     "http_status": getattr(exc, "status_code", getattr(exc, "code", None)),
                     "message": openreview_error_message(exc),
                 })
+                if version == "v2" and self._is_v2_challenge(exc):
+                    # A supplied HTTP client is the only route to the
+                    # deterministic api2 recovery.  Once that route is
+                    # attempted, do not mask a challenge with the legacy v1
+                    # client or silently reinterpret its response.
+                    if self.http_client is not None:
+                        recovered = self._recover_v2_notes(params, stage=stage)
+                        if recovered is not None:
+                            return recovered
+                        break
+                    # Keep the historical v1 compatibility behavior for
+                    # callers that construct this source without an injected
+                    # broker.  The production pipeline supplies one when
+                    # headless recovery is enabled.
         if last_error is None:
             raise RuntimeError("OpenReview client request failed")
         raise last_error
+
+    @staticmethod
+    def _is_v2_challenge(exc: Exception) -> bool:
+        """Return whether a v2 failure may use the bounded HTTP recovery."""
+
+        status = getattr(exc, "status_code", getattr(exc, "code", None))
+        if status == 403:
+            return True
+        return openreview_failure_stage(exc, "venue_query") == "challenge"
+
+    def _recover_v2_notes(self, params: dict[str, str], *, stage: str) -> HttpResponse | None:
+        """Fetch and validate the fixed api2 response after a v2 challenge."""
+
+        recovery_url = _openreview_recovery_url(params)
+        self._requests_attempted += 1
+        try:
+            response = self.http_client.get(
+                recovery_url,
+                max_bytes=20 * 1024 * 1024,
+                allowed_hosts=_OPENREVIEW_RECOVERY_HOSTS,
+            )
+            if not isinstance(response, HttpResponse):
+                raise TypeError("OpenReview HTTP recovery returned an invalid response")
+            if not 200 <= response.status < 300:
+                raise HttpRequestError(response.status, response.url)
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("OpenReview recovery response must be an object")
+            notes = payload.get("notes")
+            if not isinstance(notes, list) or any(not isinstance(note, dict) for note in notes):
+                raise ValueError("OpenReview recovery response has non-list notes")
+            self._requests_succeeded += 1
+            self._last_client_version = "v2_http"
+            return response
+        except Exception as exc:
+            self._requests_failed += 1
+            self.errors.append({
+                "endpoint": "v2_http_recovery",
+                "stage": openreview_failure_stage(exc, stage),
+                "params": dict(params),
+                "error_type": type(exc).__name__,
+                "http_status": getattr(exc, "status_code", getattr(exc, "code", None)),
+                "message": openreview_error_message(exc),
+            })
+            return None
 
     def _fetch_replies(self, forum_id: str) -> list[dict[str, Any]]:
         """Fetch at most three bounded reply pages for one forum."""

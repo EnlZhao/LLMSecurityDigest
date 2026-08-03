@@ -612,6 +612,90 @@ def test_openreview_v1_compatibility_keeps_v2_challenge_visible() -> None:
     }]
 
 
+def test_openreview_v2_challenge_uses_fixed_http_recovery_and_keeps_evidence() -> None:
+    class ChallengeError(Exception):
+        code = 403
+
+    class V2:
+        def get_notes(self, **_kwargs):
+            raise ChallengeError("Challenge verification required")
+
+    class V1:
+        def get_notes(self, **_kwargs):
+            raise AssertionError("challenge recovery must not route through v1")
+
+    class Factory:
+        def get(self, version: str):
+            return V2() if version == "v2" else V1()
+
+    class RecoveryClient:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            return HttpResponse(
+                url=url,
+                final_url=url,
+                status=200,
+                headers={"content-type": "application/json"},
+                body=json.dumps({"notes": [{"id": "recovered-paper"}]}).encode(),
+            )
+
+    recovery = RecoveryClient()
+    report = OpenReviewSource(Factory(), http_client=recovery).probe("ICLR.cc/2025/Conference")
+
+    assert report["status"] == "partial"
+    assert report["notes"] == 1
+    assert report["fallback_errors"] == [{
+        "endpoint": "v2",
+        "stage": "challenge",
+        "error_type": "ChallengeError",
+        "http_status": 403,
+    }]
+    assert recovery.calls[0][0] == (
+        "https://api2.openreview.net/notes?content.venueid=ICLR.cc%2F2025%2FConference"
+        "&limit=1&details=replies"
+    )
+    assert recovery.calls[0][1]["allowed_hosts"] == {"api2.openreview.net"}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [b"not-json", json.dumps({"notes": {"id": "wrong-shape"}}).encode()],
+)
+def test_openreview_v2_http_recovery_failure_preserves_challenge_error(body: bytes) -> None:
+    class ChallengeError(Exception):
+        code = 403
+
+    class V2:
+        def get_notes(self, **_kwargs):
+            raise ChallengeError("Challenge verification required")
+
+    class V1:
+        def get_notes(self, **_kwargs):
+            raise AssertionError("failed challenge recovery must not route through v1")
+
+    class Factory:
+        def get(self, version: str):
+            return V2() if version == "v2" else V1()
+
+    class RecoveryClient:
+        def get(self, url, **_kwargs):
+            return HttpResponse(url=url, status=200, headers={}, body=body)
+
+    result = OpenReviewSource(Factory(), http_client=RecoveryClient()).discover_result(
+        SearchPlan(queries=["security"], openreview_venues=["ICLR.cc/2025/Conference"], max_results_per_venue=1)
+    )
+
+    errors = [item for item in result.reports[0]["errors"] if "endpoint" in item]
+    assert result.papers == []
+    assert result.reports[0]["status"] == "error"
+    assert [item["endpoint"] for item in errors] == ["v2", "v2_http_recovery"]
+    assert errors[0]["stage"] == "challenge"
+    assert errors[0]["http_status"] == 403
+
+
 def test_materialization_enforces_the_five_paper_track_limit(monkeypatch, tmp_path) -> None:
     papers = []
     selections = []
