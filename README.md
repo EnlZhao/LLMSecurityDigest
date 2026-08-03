@@ -169,6 +169,18 @@ never a fact authority for title, authors, abstract, venue, URLs, or BibTeX.
   whose version and repeated paper key match the refreshed PMLR identifier.
   NeurIPS supports its official no-DOI BibTeX export with an equally strict
   host and path check.
+- Discovery plans and evolution overlays now accept OpenReview venue IDs only
+  when they exactly match the registered catalog (with Unicode/casefold
+  normalization). Official proceedings adapters also reject absolute links
+  that leave their registered HTTPS host.
+- Crossref and IEEE Xplore treat a missing top-level result array as a schema
+  error rather than a successful empty response. HTTP failures, incomplete
+  abstract/PDF records, and missing materialization BibTeX remain visible and
+  cannot become facts.
+- Hermes full-text reading is bounded to a 6,000-character section, three
+  search matches, 300 characters of context, and a 500-character query. The
+  daily CLI has an isolated-data-directory end-to-end regression covering the
+  ten-paper and five-per-track limits without allowing LLM fields into facts.
 
 ## 站点
 
