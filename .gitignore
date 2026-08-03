@@ -37,6 +37,6 @@ AGENTS.md
 # --- Misc generated docs that were already excluded ---
 docs/superpowers/
 
-# --- Tests: kept on disk but not tracked. Add `!tests/` here only if you want
-#     to start committing test changes. ---
-tests/
+# --- Tests ---
+# Keep source regression tests under version control. Their caches remain
+# ignored above.
