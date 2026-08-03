@@ -365,8 +365,14 @@ class HeadlessDiscovery:
                 raise HeadlessDiscoveryError("browser redirect limit exceeded")
             for redirect_url in redirects:
                 validate_browser_url(redirect_url, allowed_hosts=allowed)
-            body = _response_body(response, max_bytes=max_bytes)
             response_headers = _safe_response_headers(getattr(response, "headers", {}))
+            try:
+                content_length = int(response_headers.get("content-length", "0") or 0)
+            except ValueError:
+                content_length = 0
+            if content_length > max_bytes:
+                raise HeadlessDiscoveryError(f"browser response exceeds {max_bytes} bytes")
+            body = _response_body(response, max_bytes=max_bytes)
             fetched_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
             safe_url = safe_provenance_url
             if status >= 400:
@@ -461,11 +467,15 @@ class HeadlessDiscovery:
             playwright = manager.start()
             browser = playwright.chromium.launch(headless=True)
             context = browser.new_context(java_script_enabled=True)
+            if callable(getattr(context, "route", None)):
+                _install_route_guard(context, allowed_hosts=ALLOWED_HOSTS)
             page = context.new_page()
             for url in normalized["urls"]:
                 try:
                     response = page.goto(url, wait_until="domcontentloaded", timeout=normalized["timeout_ms"])
                     status = int(response.status) if response is not None else None
+                    final_url = str(getattr(response, "url", "") or getattr(page, "url", "") or url)
+                    validate_browser_url(final_url)
                     page_title = str(page.title() or "")[:500]
                     body_text = str(page.locator("body").inner_text(timeout=normalized["timeout_ms"]) or "")
                     links: list[str] = []
