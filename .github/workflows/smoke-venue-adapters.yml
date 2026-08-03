@@ -1,0 +1,120 @@
+name: Smoke Official Venue Adapters
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: ${{ matrix.source }} / ${{ matrix.venue }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - source: official
+            venue: usenix-security
+          - source: official
+            venue: ndss
+          - source: official
+            venue: neurips
+          - source: official
+            venue: icml
+          - source: official
+            venue: cvpr
+          - source: official
+            venue: eccv
+          - source: official
+            venue: acl
+          - source: official
+            venue: emnlp
+          - source: official
+            venue: aaai
+          - source: official
+            venue: ijcai
+          - source: crossref
+            venue: ieee-sp
+          - source: crossref
+            venue: acm-ccs
+          - source: crossref
+            venue: tdsc
+          - source: crossref
+            venue: tifs
+          - source: crossref
+            venue: tops
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install collector and bounded browser fallback
+        run: |
+          python -m pip install . playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Collect one official record and validate its report
+        env:
+          VENUE: ${{ matrix.venue }}
+          SOURCE: ${{ matrix.source }}
+          LLMSD_HEADLESS_FALLBACK: "1"
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          venue = os.environ["VENUE"]
+          source = os.environ["SOURCE"]
+          work = Path(".smoke")
+          work.mkdir()
+          plan = {
+              "queries": ["LLM security"],
+              "sources": [source],
+              "venue_groups": [venue],
+              "date_from": "2024-01-01",
+              "date_to": "2024-12-31",
+              "max_results_per_query": 1,
+              "max_results_per_venue": 1,
+              "target": 10,
+              "scholar_enrich_limit": 0,
+          }
+          (work / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
+          PY
+          python scripts/llm_security/run_daily.py collect \
+            --plan .smoke/plan.json \
+            --out .smoke/candidates.json \
+            --data-dir .smoke/data
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          venue = os.environ["VENUE"]
+          payload = json.loads(Path(".smoke/candidates.json").read_text(encoding="utf-8"))
+          reports = [
+              report for report in payload.get("source_reports", [])
+              if report.get("source") == os.environ["SOURCE"]
+              and report.get("venue_group") == venue
+          ]
+          if len(reports) != 1:
+              raise SystemExit(f"expected exactly one source report for {venue}, got {len(reports)}")
+          report = reports[0]
+          source = os.environ["SOURCE"]
+          passed = report.get("status") == "ok" and report.get("requests_succeeded", 0) >= 1
+          if source == "official":
+              passed = passed and report.get("records_valid", 0) >= 1
+          else:
+              # Crossref is a registered metadata query. It can correctly
+              # reject every bounded result as incomplete; the smoke asserts
+              # that the official endpoint and venue/container filter ran.
+              passed = passed and report.get("records_scanned", 0) >= 1
+          if not passed:
+              print(json.dumps(report, ensure_ascii=False, indent=2), file=sys.stderr)
+              raise SystemExit(f"{source} adapter smoke failed for {venue}")
+          PY
