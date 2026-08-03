@@ -114,17 +114,33 @@ def _load_json_value(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _evolution_error_report(status: str, exc: Exception) -> dict[str, str]:
+    """Return stable evolution CLI diagnostics without reflecting input text."""
+    return {
+        "status": status,
+        "error_type": type(exc).__name__,
+        "error": "evolution operation failed; details are withheld",
+    }
+
+
 def command_reflect(args: argparse.Namespace) -> int:
-    candidate = _load_json_object(args.input) if args.input else {"overlay": {}}
-    store = _evolution_store(args.data_dir)
     try:
+        candidate = _load_json_object(args.input) if args.input else {"overlay": {}}
+        store = _evolution_store(args.data_dir)
         path = store.save_candidate(candidate)
     except EvolutionValidationError as exc:
-        print(json.dumps({"status": "rejected", "error": str(exc)}, ensure_ascii=False))
+        print(json.dumps(_evolution_error_report("rejected", exc), ensure_ascii=False))
         return 2
-    if args.out:
-        write_json(args.out, json.loads(path.read_text(encoding="utf-8")))
-    stored = store.load_candidate(path)
+    except Exception as exc:
+        print(json.dumps(_evolution_error_report("failed", exc), ensure_ascii=False))
+        return 2
+    try:
+        if args.out:
+            write_json(args.out, json.loads(path.read_text(encoding="utf-8")))
+        stored = store.load_candidate(path)
+    except Exception as exc:
+        print(json.dumps(_evolution_error_report("failed", exc), ensure_ascii=False))
+        return 2
     print(json.dumps({"status": "candidate", "version": stored["version"], "path": str(path)}, ensure_ascii=False))
     return 0
 
@@ -141,38 +157,38 @@ def command_validate_evolution(args: argparse.Namespace) -> int:
     try:
         candidate = _load_json_object(args.candidate) if args.candidate else _evolution_store(args.data_dir).load_candidate(args.version)
         report = validate_evolution(candidate)
-    except (ValueError, OSError, json.JSONDecodeError) as exc:
-        print(json.dumps({"status": "invalid", "error_type": type(exc).__name__, "error": str(exc)[:300]}))
+    except Exception as exc:
+        print(json.dumps(_evolution_error_report("invalid", exc), ensure_ascii=False))
         return 2
     print(json.dumps(report, ensure_ascii=False))
     return 0
 
 
 def command_shadow_evolution(args: argparse.Namespace) -> int:
-    store = _evolution_store(args.data_dir)
     try:
+        store = _evolution_store(args.data_dir)
         candidate = _candidate_from_args(store, args)
         # Shadow fixtures are immutable candidate-owned tests. Keeping the
         # CLI free of an override path prevents an external fixture file from
         # bypassing the candidate's required regression cases.
         report = store.shadow(candidate)
-    except (ValueError, OSError, json.JSONDecodeError) as exc:
-        print(json.dumps({"status": "failed", "error_type": type(exc).__name__, "error": str(exc)[:300]}))
+    except Exception as exc:
+        print(json.dumps(_evolution_error_report("failed", exc), ensure_ascii=False))
         return 2
     print(json.dumps(report, ensure_ascii=False))
     return 0 if report["status"] == "passed" else 3
 
 
 def command_activate_evolution(args: argparse.Namespace) -> int:
-    store = _evolution_store(args.data_dir)
     try:
+        store = _evolution_store(args.data_dir)
         candidate = _candidate_from_args(store, args)
         if not args.shadow_report:
             raise EvolutionValidationError("--shadow-report is required; activation never runs shadow implicitly")
         report = _load_json_object(args.shadow_report)
         result = store.activate(candidate, report=report)
-    except (ValueError, OSError, json.JSONDecodeError) as exc:
-        print(json.dumps({"status": "failed", "error_type": type(exc).__name__, "error": str(exc)[:300]}))
+    except Exception as exc:
+        print(json.dumps(_evolution_error_report("failed", exc), ensure_ascii=False))
         return 2
     print(json.dumps(result, ensure_ascii=False))
     return 0
@@ -186,8 +202,8 @@ def command_evolution_status(args: argparse.Namespace) -> int:
 def command_rollback_evolution(args: argparse.Namespace) -> int:
     try:
         result = _evolution_store(args.data_dir).rollback(args.version)
-    except (ValueError, OSError, json.JSONDecodeError) as exc:
-        print(json.dumps({"status": "failed", "error_type": type(exc).__name__, "error": str(exc)[:300]}))
+    except Exception as exc:
+        print(json.dumps(_evolution_error_report("failed", exc), ensure_ascii=False))
         return 2
     print(json.dumps(result, ensure_ascii=False))
     return 0

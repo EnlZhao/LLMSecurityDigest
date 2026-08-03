@@ -55,6 +55,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: paper-candidates-${{ github.run_id }}
-          path: ${{ runner.temp }}/llmsd/
+          path: ${{ runner.temp }}/llmsd/candidates.json
           if-no-files-found: error
           retention-days: 7

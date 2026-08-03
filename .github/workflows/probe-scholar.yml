@@ -107,25 +107,153 @@ jobs:
           from llm_security_digest.papers.pipeline import default_client
           from llm_security_digest.papers.sources import GoogleScholarEnricher
 
+          MAX_ARTIFACT_BYTES = 5 * 1024 * 1024
+          MAX_CANDIDATES = 1000
+          MAX_CANDIDATE_BYTES = 128 * 1024
+          MAX_PAPER_ID_LENGTH = 320
+          MAX_TITLE_LENGTH = 1000
+          MAX_STRING_LENGTHS = {
+              "source": 64,
+              "source_id": 512,
+              "abstract": 20000,
+              "publication_status": 32,
+              "venue": 500,
+              "published_at": 64,
+              "updated_at": 64,
+              "doi": 512,
+              "landing_url": 4096,
+              "pdf_url": 4096,
+              "primary_category": 256,
+              "source_comment": 4000,
+              "bibtex": 40000,
+              "bibtex_url": 4096,
+              "collection_tier": 64,
+              "match_state": 64,
+          }
+          MAX_LIST_LENGTHS = {
+              "authors": 100,
+              "categories": 100,
+              "alternate_ids": 100,
+              "unresolved_evidence": 50,
+              "venue_evidence": 100,
+          }
+          OBJECT_FIELDS = {
+              "platform_links", "scholar", "content", "provenance", "identifiers",
+              "alternate_links", "venue_evidence", "source_metadata", "unresolved_evidence",
+          }
+          ALLOWED_CANDIDATE_FIELDS = {
+              "paper_id", "source", "source_id", "title", "authors", "abstract",
+              "publication_status", "venue", "published_at", "updated_at", "doi",
+              "landing_url", "pdf_url", "primary_category", "categories", "source_comment",
+              "bibtex", "bibtex_url", "platform_links", "scholar", "content", "provenance",
+              "identifiers", "alternate_links", "alternate_ids", "venue_evidence",
+              "source_metadata", "collection_tier", "match_state", "unresolved_evidence",
+          }
+          URL_FIELDS = {"landing_url", "pdf_url", "bibtex_url"}
+
+          def reject(message):
+              raise SystemExit(message)
+
+          def bounded_json(value, limit):
+              try:
+                  return len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) <= limit
+              except (TypeError, ValueError, UnicodeError):
+                  return False
+
+          def validate_candidate(item, index, seen):
+              if not isinstance(item, dict) or not set(item).issubset(ALLOWED_CANDIDATE_FIELDS):
+                  reject("candidate artifact contains invalid candidate fields")
+              if not bounded_json(item, MAX_CANDIDATE_BYTES):
+                  reject("candidate artifact contains an oversized candidate")
+              paper_id = item.get("paper_id")
+              title = item.get("title")
+              if (
+                  not isinstance(paper_id, str)
+                  or not isinstance(title, str)
+                  or not paper_id.strip()
+                  or not title.strip()
+                  or len(paper_id.strip()) > MAX_PAPER_ID_LENGTH
+                  or len(title.strip()) > MAX_TITLE_LENGTH
+                  or any(ord(char) < 32 for char in paper_id + title)
+              ):
+                  reject("candidate artifact contains an invalid paper identity or title")
+              paper_id = paper_id.strip()
+              if paper_id in seen:
+                  reject("candidate artifact contains duplicate paper_id values")
+              seen.add(paper_id)
+              item["paper_id"] = paper_id
+              item["title"] = title.strip()
+              for field, limit in MAX_STRING_LENGTHS.items():
+                  value = item.get(field)
+                  if value is None:
+                      continue
+                  if not isinstance(value, str) or len(value) > limit or any(
+                      ord(char) < 32 and char not in "\n\r\t" for char in value
+                  ):
+                      reject("candidate artifact contains an invalid bounded field")
+                  if field in URL_FIELDS and (
+                      not value.startswith("https://") or any(ord(char) < 32 for char in value)
+                  ):
+                      reject("candidate artifact contains a non-HTTPS URL")
+              for field, limit in MAX_LIST_LENGTHS.items():
+                  value = item.get(field)
+                  if value is None:
+                      continue
+                  if not isinstance(value, list) or len(value) > limit:
+                      reject("candidate artifact contains an invalid bounded array")
+                  if field in {"authors", "categories", "alternate_ids"} and any(
+                      not isinstance(entry, str) or not entry.strip() or len(entry) > 500
+                      for entry in value
+                  ):
+                      reject("candidate artifact contains an invalid text array")
+                  if field in {"unresolved_evidence", "venue_evidence"} and not bounded_json(value, 32768):
+                      reject("candidate artifact contains oversized evidence")
+              for field in OBJECT_FIELDS:
+                  value = item.get(field)
+                  if value is None:
+                      continue
+                  if field in {"venue_evidence", "unresolved_evidence"}:
+                      continue
+                  if not isinstance(value, dict) or len(value) > 100 or not bounded_json(value, 65536):
+                      reject("candidate artifact contains an invalid bounded object")
+              platform_links = item.get("platform_links")
+              if platform_links is not None and any(
+                  not isinstance(key, str)
+                  or not isinstance(value, str)
+                  or len(key) > 128
+                  or len(value) > 4096
+                  or not value.startswith("https://")
+                  for key, value in platform_links.items()
+              ):
+                  reject("candidate artifact contains an invalid platform link")
+
           path = os.environ["CANDIDATES_PATH"]
           # The downloaded artifact is untrusted JSON data. Validate and parse
           # it only; never execute candidate content or materialize facts here.
-          with open(path, encoding="utf-8") as handle:
-              payload = json.load(handle)
+          try:
+              artifact_size = os.path.getsize(path)
+              if artifact_size > MAX_ARTIFACT_BYTES:
+                  reject("candidate artifact exceeds the size limit")
+              with open(path, "rb") as handle:
+                  raw = handle.read(MAX_ARTIFACT_BYTES + 1)
+          except OSError:
+              reject("candidate artifact is unavailable")
+          if len(raw) > MAX_ARTIFACT_BYTES:
+              reject("candidate artifact exceeds the size limit")
+          try:
+              payload = json.loads(raw.decode("utf-8"))
+          except (UnicodeDecodeError, json.JSONDecodeError):
+              reject("candidate artifact is not valid UTF-8 JSON")
           if not isinstance(payload, dict) or not isinstance(payload.get("candidates"), list):
               raise SystemExit("candidate artifact has an invalid schema")
           candidates = payload["candidates"]
-          if len(candidates) > 1000 or any(
-              not isinstance(item, dict)
-              or not isinstance(item.get("paper_id"), str)
-              or not item.get("paper_id").strip()
-              or not isinstance(item.get("title"), str)
-              or not item.get("title").strip()
-              for item in candidates
-          ):
-              raise SystemExit("candidate artifact contains invalid records")
+          if len(candidates) > MAX_CANDIDATES:
+              reject("candidate artifact contains too many candidates")
+          seen_ids = set()
+          for index, item in enumerate(candidates):
+              validate_candidate(item, index, seen_ids)
           unresolved = [item for item in candidates if item.get("unresolved_evidence")]
-          shortlist = unresolved + [item for item in candidates if item not in unresolved]
+          shortlist = unresolved + [item for item in candidates if not item.get("unresolved_evidence")]
           shortlist = shortlist[:5]
           enricher = GoogleScholarEnricher(default_client())
           output = {
