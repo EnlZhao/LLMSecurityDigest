@@ -20,6 +20,7 @@ from .sources import (
     OpenReviewSource,
     official_route_for_paper,
     reconcile_arxiv_to_formal,
+    trusted_fulltext_url,
     trusted_fulltext_hosts,
 )
 
@@ -64,7 +65,11 @@ def _matches_keywords(paper: PaperFacts, keywords: list[str]) -> bool:
 def _matches_date_window(paper: PaperFacts, plan: SearchPlan) -> bool:
     published = (paper.published_at or "")[:10]
     if not published:
-        return not (plan.date_from or plan.date_to)
+        # Proceedings records sometimes provide only the conference year.
+        # The adapter has already bounded discovery to that year, but must not
+        # invent a day merely to satisfy a date filter. Keep formal records in
+        # scope; un-dated arXiv records are not eligible for a date window.
+        return paper.collection_tier == "formal"
     if plan.date_from and published < plan.date_from:
         return False
     if plan.date_to and published > plan.date_to:
@@ -385,6 +390,7 @@ def _bibtex_source_url(paper: PaperFacts) -> str | None:
             return f"https://www.ijcai.org/proceedings/{match.group(1)}/bibtex/{int(match.group(2))}"
     metadata = paper.source_metadata if isinstance(paper.source_metadata, dict) else {}
     value = metadata.get("bibtex_url") if getattr(paper, "_authoritative_refresh", False) else None
+    route_id = source_id.split(":", 1)[-1] if source in {"neurips", "usenix", "ndss", "cvpr"} else source_id
     trusted_hosts = {
         "neurips": {"proceedings.neurips.cc"},
         "usenix": {"www.usenix.org"},
@@ -398,7 +404,7 @@ def _bibtex_source_url(paper: PaperFacts) -> str | None:
         if (
             parsed.hostname
             and parsed.hostname.casefold().rstrip(".") in trusted_hosts
-            and source_id.casefold() in parsed.path.casefold()
+            and route_id.casefold() in parsed.path.casefold()
             and parsed.username is None
             and parsed.password is None
         ):
@@ -503,6 +509,8 @@ def fetch_fulltext(paper: PaperFacts, *, client: HttpClient, data_dir: Path, max
     failures: list[str] = []
     for url, kind in candidates:
         try:
+            if not trusted_fulltext_url(paper, url):
+                raise ValueError("full-text URL does not match the registered source path")
             response = client.get(
                 url,
                 min_interval=0.25,

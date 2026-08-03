@@ -71,7 +71,7 @@ _OFFICIAL_SOURCE_SPECS = {
 _SOURCE_HOSTS = {
     "acl": frozenset({"aclanthology.org"}),
     "emnlp": frozenset({"aclanthology.org"}),
-    "pmlr": frozenset({"proceedings.mlr.press"}),
+    "pmlr": frozenset({"proceedings.mlr.press", "raw.githubusercontent.com"}),
     "neurips": frozenset({"proceedings.neurips.cc"}),
     "aaai_ojs": frozenset({"ojs.aaai.org"}),
     "ijcai": frozenset({"www.ijcai.org"}),
@@ -144,21 +144,6 @@ def platform_links(*, title: str, landing_url: str, doi: str | None = None, arxi
     return links
 
 
-def _safe_year(value: Any) -> int | None:
-    try:
-        year = int(value)
-    except (TypeError, ValueError):
-        return None
-    current = datetime.now(timezone.utc).year
-    return year if 1990 <= year <= current + 1 else None
-
-
-def _paper_year_hint(paper: PaperFacts) -> int | None:
-    """Return only the bounded date needed to build an official route."""
-    published = (paper.published_at or "")[:4]
-    return _safe_year(published)
-
-
 def official_route_for_paper(paper: PaperFacts) -> tuple[str, str, frozenset[str]]:
     """Build a detail URL from a baseline source/id pair.
 
@@ -186,12 +171,10 @@ def official_route_for_paper(paper: PaperFacts) -> tuple[str, str, frozenset[str
             raise ValueError("invalid PMLR source id")
         url = f"https://proceedings.mlr.press/{match.group(2)}/{match.group(1)}.html"
     elif source == "neurips":
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,180}", source_id):
+        match = re.fullmatch(r"((?:19|20)\d{2}):([A-Za-z0-9][A-Za-z0-9._-]{1,180})", source_id)
+        if not match:
             raise ValueError("invalid NeurIPS source id")
-        year = _paper_year_hint(paper)
-        if year is None:
-            raise ValueError("NeurIPS source id requires a bounded proceedings year")
-        url = f"https://proceedings.neurips.cc/paper_files/paper/{year}/{source_id}-Abstract-Conference.html"
+        url = f"https://proceedings.neurips.cc/paper_files/paper/{match.group(1)}/{match.group(2)}-Abstract-Conference.html"
     elif source == "aaai_ojs":
         if not re.fullmatch(r"[1-9]\d{0,8}", source_id):
             raise ValueError("invalid AAAI article id")
@@ -202,33 +185,26 @@ def official_route_for_paper(paper: PaperFacts) -> tuple[str, str, frozenset[str
             raise ValueError("invalid IJCAI source id")
         url = f"https://www.ijcai.org/proceedings/{match.group(1)}/{int(match.group(2))}"
     elif source == "usenix":
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,160}", source_id):
+        match = re.fullmatch(r"((?:19|20)\d{2}):([A-Za-z0-9][A-Za-z0-9._-]{1,160})", source_id)
+        if not match:
             raise ValueError("invalid USENIX presentation id")
-        year = _paper_year_hint(paper)
-        if year is None:
-            raise ValueError("USENIX source id requires a bounded conference year")
-        url = f"https://www.usenix.org/conference/usenixsecurity{year % 100:02d}/presentation/{source_id}"
+        year = int(match.group(1))
+        url = f"https://www.usenix.org/conference/usenixsecurity{year % 100:02d}/presentation/{match.group(2)}"
     elif source == "ndss":
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,180}", source_id):
+        match = re.fullmatch(r"((?:19|20)\d{2}):([A-Za-z0-9][A-Za-z0-9._-]{1,180})", source_id)
+        if not match:
             raise ValueError("invalid NDSS source id")
-        year = _paper_year_hint(paper)
-        if year is None:
-            raise ValueError("NDSS source id requires a bounded symposium year")
-        url = f"https://www.ndss-symposium.org/ndss{year}/ndss-paper/{source_id}/"
+        url = f"https://www.ndss-symposium.org/ndss{match.group(1)}/ndss-paper/{match.group(2)}/"
     elif source == "cvpr":
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,240}", source_id):
+        match = re.fullmatch(r"((?:19|20)\d{2}):([A-Za-z0-9][A-Za-z0-9._-]{1,240})", source_id)
+        if not match:
             raise ValueError("invalid CVF source id")
-        year = _paper_year_hint(paper)
-        if year is None:
-            raise ValueError("CVF source id requires a bounded proceedings year")
-        url = f"https://openaccess.thecvf.com/content/CVPR{year}/html/{source_id}.html"
+        url = f"https://openaccess.thecvf.com/content/CVPR{match.group(1)}/html/{match.group(2)}.html"
     elif source == "eccv":
         match = re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*_ECCV_((?:19|20)\d{2})_paper", source_id)
         if not match:
             raise ValueError("invalid ECVA source id")
-        year = _paper_year_hint(paper)
-        if year is None or int(match.group(1)) != year:
-            raise ValueError("ECVA source id requires a matching proceedings year")
+        year = int(match.group(1))
         url = f"https://www.ecva.net/papers/eccv_{year}/papers_ECCV/html/{source_id}.php"
     else:  # pragma: no cover - source map is exhaustive by construction.
         raise ValueError(f"unsupported official source: {paper.source!r}")
@@ -252,6 +228,14 @@ def trusted_fulltext_hosts(paper: PaperFacts) -> frozenset[str]:
             raise ValueError("Crossref paper has no registered venue")
         return _trusted_crossref_hosts(spec)
     raise ValueError(f"no trusted full-text hosts for source {paper.source!r}")
+
+
+def trusted_fulltext_url(paper: PaperFacts, url: str) -> bool:
+    """Apply the source-specific path restriction for registered PDF hosts."""
+    parsed = parse.urlsplit(url)
+    if str(paper.source).casefold() != "pmlr" or (parsed.hostname or "").casefold().rstrip(".") != "raw.githubusercontent.com":
+        return True
+    return bool(re.fullmatch(r"/mlresearch/v\d+/main/assets/[A-Za-z0-9][A-Za-z0-9._-]*\.pdf", parsed.path))
 
 
 def _trusted_crossref_hosts(spec: Any) -> frozenset[str]:
@@ -1595,16 +1579,14 @@ class IeeeXploreSource:
                 pdf_url = ""
             if pdf_url and not pdf_url.startswith("https://"):
                 pdf_url = ""
-            year_value = item.get("publication_year") or item.get("publicationYear") or item.get("year")
-            try:
-                published_at = f"{int(year_value):04d}-01-01T00:00:00Z" if year_value else None
-            except (TypeError, ValueError):
-                published_at = None
+            # IEEE Xplore's year field is not a publication timestamp.
+            # Keep the date unknown unless the API supplies an exact date.
+            published_at = None
             missing = [
                 field for field, value in (
                     ("doi", doi), ("title", title), ("authors", authors),
                     ("abstract", abstract), ("landing_url", landing_url),
-                    ("published_at", published_at), ("pdf_url", pdf_url),
+                    ("pdf_url", pdf_url),
                 ) if not value
             ]
             if missing:

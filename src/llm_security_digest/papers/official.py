@@ -21,7 +21,7 @@ from .models import DiscoveryResult, PaperFacts, SearchPlan, VenueSpec, normaliz
 _OFFICIAL_PDF_HOSTS = {
     "acl": frozenset({"aclanthology.org"}),
     "emnlp": frozenset({"aclanthology.org"}),
-    "icml": frozenset({"proceedings.mlr.press"}),
+    "icml": frozenset({"proceedings.mlr.press", "raw.githubusercontent.com"}),
     "neurips": frozenset({"proceedings.neurips.cc"}),
     "aaai": frozenset({"ojs.aaai.org"}),
     "ijcai": frozenset({"www.ijcai.org"}),
@@ -132,20 +132,17 @@ def _absolute(value: str, base: str) -> str:
     return urljoin(base, value)
 
 
-def _iso_date(value: str, fallback_year: int | None = None) -> str | None:
+def _iso_date(value: str) -> str | None:
     text = _clean(value)
-    formats = ("%Y-%m-%d", "%Y/%m/%d", "%Y/%m", "%B %d, %Y", "%b %d, %Y")
+    formats = ("%Y-%m-%d", "%Y/%m/%d", "%B %d, %Y", "%b %d, %Y")
     for fmt in formats:
         try:
             parsed = datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
             return parsed.isoformat().replace("+00:00", "Z")
         except ValueError:
             pass
-    match = re.search(r"\b((?:19|20)\d{2})\b", text)
-    if match:
-        return f"{match.group(1)}-01-01T00:00:00Z"
-    if fallback_year:
-        return f"{int(fallback_year):04d}-01-01T00:00:00Z"
+    # A proceedings year is a routing hint, not an exact publication date.
+    # Facts must not turn it into a fabricated January 1 timestamp.
     return None
 
 
@@ -176,7 +173,7 @@ def _abstract(root: _Node) -> str:
         if node:
             return _strip_abstract_label(node.text())
     for node in _nodes(root):
-        if any(_has_class(node, class_name) for class_name in ("abstract", "acl-abstract", "article-details-abstract", "abstract-content")):
+        if any(_has_class(node, class_name) for class_name in ("abstract", "paper-abstract", "acl-abstract", "article-details-abstract", "abstract-content")):
             return _strip_abstract_label(node.text())
     return ""
 
@@ -314,6 +311,11 @@ def _make_paper(
     if not pdf_host or pdf_host.casefold().rstrip(".") not in allowed_pdf_hosts:
         if "pdf_url" not in missing:
             missing.append("pdf_url")
+    elif spec.key == "icml" and pdf_host.casefold().rstrip(".") == "raw.githubusercontent.com":
+        path = urlparse(pdf_url).path
+        if not re.fullmatch(r"/mlresearch/v\d+/main/assets/[A-Za-z0-9][A-Za-z0-9._-]*\.pdf", path):
+            if "pdf_url" not in missing:
+                missing.append("pdf_url")
     if missing:
         return ParsedRecord(
             incomplete=_incomplete(
@@ -483,7 +485,7 @@ class ACLAnthologyAdapter(OfficialAdapter):
         authors = _authors(root)
         abstract = _abstract(root)
         pdf = _pdf_url(root, url) or f"{url.rstrip('/')}.pdf"
-        published = next((_iso_date(value, year) for name in ("citation_publication_date", "citation_date", "DC.Date.issued") for value in _meta(root, name) if _iso_date(value, year)), _iso_date("", year))
+        published = next((_iso_date(value) for name in ("citation_publication_date", "citation_date", "DC.Date.issued") for value in _meta(root, name) if _iso_date(value)), None)
         return _make_paper(
             spec=spec, adapter=spec.key, source_id=_last_path(url), title=title, authors=authors,
             abstract=abstract, published_at=published, landing_url=url, pdf_url=pdf,
@@ -594,7 +596,7 @@ class PMLRAdapter(OfficialAdapter):
         paper_key = re.sub(r"\.html$", "", _last_path(url), flags=re.IGNORECASE)
         return _make_paper(
             spec=spec, adapter=self_adapter(spec, "pmlr"), source_id=f"{paper_key}:{volume}",
-            title=title, authors=authors, abstract=abstract, published_at=_iso_date("", year),
+            title=title, authors=authors, abstract=abstract, published_at=None,
             landing_url=url, pdf_url=pdf, doi=_doi(root), response=response,
             source_metadata=source_metadata,
         )
@@ -684,21 +686,10 @@ def parse_official_detail(
                 year = re.search(r"/(?:19|20)\d{2}/", url)
                 year_text = year.group(0).strip("/") if year else str(fallback_year or "")
                 pdf = f"https://www.ijcai.org/proceedings/{year_text}/{int(match.group(1)):04d}.pdf"
-    date_fallback = None if spec.adapter == "cvf" else fallback_year
     published = next(
-        (_iso_date(value, date_fallback) for name in ("citation_publication_date", "citation_date", "DC.Date.issued") for value in _meta(root, name) if _iso_date(value, date_fallback)),
-        _iso_date("", date_fallback),
+        (_iso_date(value) for name in ("citation_publication_date", "citation_date", "DC.Date.issued") for value in _meta(root, name) if _iso_date(value)),
+        None,
     )
-    if spec.adapter == "cvf" and not published:
-        return ParsedRecord(incomplete=_incomplete(
-            spec,
-            adapter=adapter_name,
-            source_id=source_id,
-            landing_url=url,
-            reason="required_official_field_missing",
-            missing=("published_at",),
-            partial={"title": _clean(title), "authors": authors, "abstract": _clean(abstract)},
-        ))
     source_metadata: dict[str, Any] = {"refreshed_from_detail": True}
     explicit_bibtex_url = _bibtex_url(root, url)
     if explicit_bibtex_url:
@@ -756,8 +747,8 @@ class NeurIPSAdapter(OfficialAdapter):
         if not pdf and "-Abstract-Conference" in url:
             pdf = url.replace("-Abstract-Conference", "-Paper-Conference").replace(".html", ".pdf")
         return _make_paper(
-            spec=spec, adapter=self_adapter(spec, "neurips"), source_id=_last_path(url).replace("-Abstract-Conference.html", ""),
-            title=title, authors=authors, abstract=abstract, published_at=_iso_date("", year), landing_url=url,
+            spec=spec, adapter=self_adapter(spec, "neurips"), source_id=f"{year}:{_last_path(url).replace('-Abstract-Conference.html', '')}",
+            title=title, authors=authors, abstract=abstract, published_at=None, landing_url=url,
             pdf_url=pdf, doi=_doi(root), response=response, source_metadata={
                 "proceedings_year": year,
                 **({"bibtex_url": _bibtex_url(root, url)} if _bibtex_url(root, url) else {}),
@@ -971,7 +962,7 @@ class ECVAAdapter(OfficialAdapter):
             title=title,
             authors=authors,
             abstract=abstract,
-            published_at=_iso_date("", actual_year),
+            published_at=None,
             landing_url=url,
             pdf_url=pdf,
             doi=cls._doi(root),
@@ -1079,23 +1070,13 @@ class CVFAdapter(OfficialAdapter):
         if bibtex_inline:
             source_metadata["bibtex_inline"] = bibtex_inline
         published = next(
-            (_iso_date(value, None) for name in ("citation_publication_date", "citation_date", "DC.Date.issued") for value in _meta(root, name) if _iso_date(value, None)),
+            (_iso_date(value) for name in ("citation_publication_date", "citation_date", "DC.Date.issued") for value in _meta(root, name) if _iso_date(value)),
             None,
         )
-        if not published:
-            return ParsedRecord(incomplete=_incomplete(
-                spec,
-                adapter=self.adapter,
-                source_id=cls.source_id_from_url(url, spec=spec, year=year),
-                landing_url=url,
-                reason="required_official_field_missing",
-                missing=("published_at",),
-                partial={"title": _clean(title), "authors": authors, "abstract": _clean(abstract)},
-            ))
         return _make_paper(
             spec=spec,
             adapter=self_adapter(spec, "cvf"),
-            source_id=cls.source_id_from_url(url, spec=spec, year=year),
+            source_id=f"{year}:{cls.source_id_from_url(url, spec=spec, year=year)}",
             title=title,
             authors=authors,
             abstract=abstract,
@@ -1243,7 +1224,7 @@ class AAAIOJSAdapter(OfficialAdapter):
         pdf = _pdf_url(root, summary.get("url", "")) or summary.get("pdf_url", "")
         return _make_paper(
             spec=spec, adapter=self_adapter(spec, "aaai_ojs"), source_id=str(summary["article_id"]), title=title,
-            authors=authors, abstract=abstract, published_at=_iso_date("", int(summary["year"])),
+            authors=authors, abstract=abstract, published_at=None,
             landing_url=summary["url"], pdf_url=pdf, doi=_doi(root), response=response,
             source_metadata={"issue_year": summary["year"], "article_id": summary["article_id"]},
         )
@@ -1357,7 +1338,7 @@ class IJCAIAdapter(OfficialAdapter):
                 title=title,
                 authors=authors,
                 abstract=abstract,
-                published_at=_iso_date("", year),
+                published_at=None,
                 landing_url=landing_url,
                 pdf_url=pdf_url,
                 doi=None,
@@ -1426,11 +1407,11 @@ class USENIXAdapter(OfficialAdapter):
         return _make_paper(
             spec=spec,
             adapter=self_adapter(spec, "usenix"),
-            source_id=_last_path(url),
+            source_id=f"{year}:{_last_path(url)}",
             title=title,
             authors=authors,
             abstract=abstract,
-            published_at=_iso_date(next(iter(_meta(root, "citation_publication_date")), ""), year),
+            published_at=_iso_date(next(iter(_meta(root, "citation_publication_date")), "")),
             landing_url=url,
             pdf_url=pdf,
             doi=_doi(root),
@@ -1491,7 +1472,7 @@ class NDSSAdapter(OfficialAdapter):
                 authors = [_clean(item) for item in re.split(r"[,;]", paragraphs[0]) if _clean(item)]
         abstract = _abstract(root)
         pdf = _pdf_url(root, url)
-        return _make_paper(spec=spec, adapter=self_adapter(spec, "ndss"), source_id=_last_path(url), title=title, authors=authors, abstract=abstract, published_at=_iso_date("", year), landing_url=url, pdf_url=pdf, doi=_doi(root), response=response, source_metadata={"symposium_year": year})
+        return _make_paper(spec=spec, adapter=self_adapter(spec, "ndss"), source_id=f"{year}:{_last_path(url)}", title=title, authors=authors, abstract=abstract, published_at=None, landing_url=url, pdf_url=pdf, doi=_doi(root), response=response, source_metadata={"symposium_year": year})
 
     def discover(self, plan: SearchPlan, spec: VenueSpec) -> DiscoveryResult:
         years = _years_for_plan(plan)

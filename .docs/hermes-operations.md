@@ -236,6 +236,14 @@ The script owns `title`, `authors`, original `abstract`, venue and publication
 status, dates, DOI, official landing/PDF URLs, BibTeX, and provenance. The
 canonical arXiv match rules are deliberately strict:
 
+An adapter records `published_at` only when an authoritative response supplies
+an exact date. A proceedings year is held in the baseline-generated source ID
+only where it is needed to rebuild a registered official URL; it is never
+converted into a fabricated `YYYY-01-01` fact. When a formal record has no
+exact date, a date-window query remains eligible because the official adapter
+has already bounded discovery to its configured proceedings year. An undated
+arXiv candidate does not receive that exception.
+
 1. A normalized DOI must match exactly; or
 2. Without DOI, normalized titles must match exactly, the first author must
    match, and the author-set similarity must be at least `0.8`.
