@@ -315,7 +315,7 @@ def _validate_source_requests(value: Any) -> list[dict[str, Any]]:
 
 def normalize_overlay_text(value: str) -> str:
     """Return the Unicode casefold key used for overlay de-duplication."""
-    return unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return unicodedata.normalize("NFKC", str(value or "")).strip().casefold()
 
 
 def _protected_key(key: Any) -> bool:
@@ -494,9 +494,16 @@ def _validate_overlay_shape(overlay: dict[str, Any]) -> None:
             unknown = set(value) - ALLOWED_SEARCH_PLAN_KEYS
             if unknown:
                 raise EvolutionValidationError(f"search_plan overlay fields are not allowed: {sorted(unknown)}")
-            for key in ("queries_add", "filter_keywords_add", "core_keywords_add", "venue_groups_add", "sources"):
+            for key in ("queries_add", "filter_keywords_add", "venue_groups_add", "sources"):
                 if key in value:
                     _validate_text_array(value[key], f"search_plan.{key}", max_items=30, max_length=500)
+            if "core_keywords_add" in value:
+                _validate_text_array(
+                    value["core_keywords_add"],
+                    "search_plan.core_keywords_add",
+                    max_items=30,
+                    max_length=100,
+                )
             if "openreview_venues" in value:
                 _validate_overlay_venues(value["openreview_venues"], "search_plan.openreview_venues", source="openreview")
             if "crossref_venues" in value:
@@ -813,7 +820,10 @@ def apply_overlay(plan: SearchPlan | dict[str, Any], overlay: dict[str, Any] | N
             seen = {normalize_overlay_text(item) for item in existing}
             for value in values:
                 if normalize_overlay_text(value) not in seen:
-                    existing.append(value)
+                    # Core terms are later matched against authoritative text;
+                    # keep their displayed spelling but never retain proposal
+                    # whitespace as part of the search term.
+                    existing.append(value.strip() if target == "core_keywords" else value)
                     seen.add(normalize_overlay_text(value))
             raw[target] = existing
     for key in (
