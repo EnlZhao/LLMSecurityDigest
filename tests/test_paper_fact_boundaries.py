@@ -195,6 +195,53 @@ def test_openreview_legacy_final_venue_is_unicode_normalized_but_not_generic() -
     assert not _is_explicit_final_venue("ICLR 2025 Conference", venue_id)
 
 
+def test_openreview_terminal_venues_are_visible_and_v1_uses_registered_request_venue() -> None:
+    response = HttpResponse(
+        url="https://api.openreview.net/notes",
+        final_url="https://api.openreview.net/notes",
+        status=200,
+        headers={},
+        body=b"{}",
+    )
+    legacy_accepted = {
+        "id": "legacy-submission",
+        "forum": "legacy-forum",
+        "content": {
+            "title": "Legacy Accepted Paper",
+            "authors": [{"fullname": "Alice Example", "username": "alice"}],
+            "abstract": "Legacy authoritative abstract.",
+            "venue": "ICLR 2025 Conference (Poster)",
+        },
+    }
+    withdrawn = {
+        "id": "withdrawn-submission",
+        "forum": "withdrawn-forum",
+        "content": {
+            "title": "Withdrawn Paper",
+            "authors": ["Bob Example"],
+            "abstract": "Withdrawn abstract.",
+            "venueid": "ICLR.cc/2025/Conference/Withdrawn_Submission",
+        },
+    }
+
+    papers, incomplete = OpenReviewSource.parse_notes_with_incomplete(
+        [legacy_accepted, withdrawn],
+        venue_id="ICLR.cc/2025/Conference",
+        response=response,
+    )
+
+    assert [paper.paper_id for paper in papers] == ["openreview:legacy-forum"]
+    assert papers[0].authors == ["Alice Example"]
+    assert incomplete == [{
+        "source": "openreview",
+        "adapter": "openreview",
+        "venue_group": "ICLR.cc/2025/Conference",
+        "source_id": "withdrawn-forum",
+        "reason": "rejected_or_withdrawn",
+        "terminal_venue_state": "withdrawn_submission",
+    }]
+
+
 def test_headless_fallback_cannot_expand_the_baseline_host_registry() -> None:
     with pytest.raises(HeadlessDiscoveryError, match="not registered"):
         _normalized_allowed_hosts({"example.invalid"})

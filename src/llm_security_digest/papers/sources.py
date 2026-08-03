@@ -118,7 +118,21 @@ def _list(value: Any) -> list[str]:
         value = value["value"]
     if not isinstance(value, list):
         return []
-    return [_text(item) for item in value if _text(item)]
+    values: list[str] = []
+    for item in value:
+        # API v2's unified profile field is commonly a list of objects such
+        # as {"fullname": "…", "username": "…"}. Never stringify an
+        # object into an apparent author name: doing so corrupts matching.
+        if isinstance(item, dict):
+            if "value" in item:
+                nested = _list(item["value"] if isinstance(item["value"], list) else [item["value"]])
+                values.extend(nested)
+                continue
+            item = item.get("fullname") or item.get("full_name") or item.get("name") or ""
+        text = _text(item)
+        if text:
+            values.append(text)
+    return values
 
 
 def _iso_from_millis(value: Any) -> str | None:
@@ -510,6 +524,24 @@ def _is_accept_decision(value: str) -> bool:
 def _is_reject_decision(value: str) -> bool:
     lowered = value.casefold()
     return any(token in lowered for token in ("reject", "withdraw", "withdrawn", "desk reject", "decline", "not accept", "no accept"))
+
+
+def _openreview_terminal_venue(venue_id: str) -> tuple[str, str] | None:
+    """Return the registered base venue and terminal state for v1/v2 tabs.
+
+    OpenReview moves withdrawn and desk-rejected submissions into explicit
+    child venue IDs. Those records are not accepted papers, but silently
+    filtering them hides a meaningful collection outcome from the source
+    report. Keep the vocabulary finite and derive no status from free text.
+    """
+    normalized = unicodedata.normalize("NFKC", _text(venue_id)).strip().rstrip("/").casefold()
+    match = re.fullmatch(
+        r"(?P<base>.+/(?:conference))/(?P<state>withdrawn_submission|desk_rejected_submission|rejected_submission)",
+        normalized,
+    )
+    if not match:
+        return None
+    return match.group("base"), match.group("state")
 
 
 def _is_explicit_final_venue(venue_text: str, assigned_venue_id: str) -> bool:
@@ -1163,17 +1195,24 @@ class OpenReviewSource:
             assigned_venue_id = _text(content.get("venueid"))
             venue_text = _text(content.get("venue"))
             requested_spec = get_venue_spec(venue_id)
-            assigned_spec = get_venue_spec(assigned_venue_id)
-            canonical_spec = requested_spec or assigned_spec
             if not assigned_venue_id:
-                incomplete.append({
-                    "source": "openreview",
-                    "adapter": "openreview",
-                    "venue_group": venue_id,
-                    "source_id": _text(note.get("forum") or note.get("id")),
-                    "reason": "missing_assigned_venue_id",
-                })
-                continue
+                # Older v1 submissions may omit venueid while the requested,
+                # baseline-registered invitation still identifies their venue.
+                # Do not infer a venue during direct identity lookups.
+                if requested_spec is None or not venue_id:
+                    incomplete.append({
+                        "source": "openreview",
+                        "adapter": "openreview",
+                        "venue_group": venue_id,
+                        "source_id": _text(note.get("forum") or note.get("id")),
+                        "reason": "missing_assigned_venue_id",
+                    })
+                    continue
+                assigned_venue_id = venue_id
+            terminal_venue = _openreview_terminal_venue(assigned_venue_id)
+            assigned_base_venue = terminal_venue[0] if terminal_venue else assigned_venue_id
+            assigned_spec = get_venue_spec(assigned_base_venue)
+            canonical_spec = assigned_spec or requested_spec
             if canonical_spec is None:
                 incomplete.append({
                     "source": "openreview",
@@ -1184,12 +1223,22 @@ class OpenReviewSource:
                     "assigned_venue_id": assigned_venue_id,
                 })
                 continue
-            venue_matches = assigned_venue_id == venue_id or (
-                requested_spec is not None and requested_spec.matches_openreview(assigned_venue_id)
+            venue_matches = assigned_base_venue == venue_id or (
+                requested_spec is not None and requested_spec.matches_openreview(assigned_base_venue)
             )
             if venue_id and assigned_venue_id and not venue_matches:
                 continue
             forum_hint = _text(note.get("forum") or note.get("id"))
+            if terminal_venue is not None:
+                incomplete.append({
+                    "source": "openreview",
+                    "adapter": "openreview",
+                    "venue_group": venue_id,
+                    "source_id": forum_hint,
+                    "reason": "rejected_or_withdrawn",
+                    "terminal_venue_state": terminal_venue[1],
+                })
+                continue
             decisions = list(dict.fromkeys([*_openreview_decisions(note), *reply_decisions.get(forum_hint, [])]))
             accepted_by_reply = any(_is_accept_decision(value) for value in decisions)
             rejected_by_reply = any(_is_reject_decision(value) for value in decisions)

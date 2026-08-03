@@ -65,6 +65,8 @@ ISSN/container 查询，DOI BibTeX 通过
 
 安装包固定 `openreview-py>=1.46,<2`；headless 服务器执行
 `python -m pip install .` 即可获得 v2 client 与 v1-compatible client。
+`doctor` 将缺少的 `SERPAPI_API_KEY` 显示为 `optional_missing`；只要必需的
+无 key 来源和运行数据目录正常，它不会因此失败。
 
 ## 每日流程
 
@@ -153,6 +155,11 @@ never a fact authority for title, authors, abstract, venue, URLs, or BibTeX.
 - OpenReview no longer treats a generic `Conference` venue label as an
   acceptance decision. It requires an explicit decision reply, or the narrow
   legacy final-venue form with a verified final track.
+- OpenReview withdrawn and desk-rejected child venues now remain visible as
+  terminal incomplete records instead of being silently filtered. Legacy v1
+  notes can use only the registered queried venue when `venueid` is absent,
+  and v2 unified author profiles are normalized from explicit names rather
+  than serialized as JSON-like author text.
 - Formal-source records no longer fabricate `YYYY-01-01` from a proceedings
   year. An unknown authoritative date remains unknown, while the baseline
   source ID retains only the year needed to rebuild an official route.

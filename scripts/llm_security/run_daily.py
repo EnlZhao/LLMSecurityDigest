@@ -288,7 +288,13 @@ def command_doctor(args: argparse.Namespace) -> int:
             "http_status": failure.get("http_status", getattr(exc, "status_code", getattr(exc, "code", None))),
             "message": openreview_error_message(exc),
         })
-    checks.append({"name": "serpapi", "status": "configured" if os.getenv("SERPAPI_API_KEY") else "missing"})
+    # Scholar enrichment is intentionally optional. Its absence must be
+    # visible to the operator without making the no-key formal collector's
+    # health check fail.
+    checks.append({
+        "name": "serpapi",
+        "status": "configured" if os.getenv("SERPAPI_API_KEY") else "optional_missing",
+    })
     data_dir = _data_dir(args.data_dir)
     try:
         data_dir.mkdir(parents=True, exist_ok=True)
@@ -299,7 +305,7 @@ def command_doctor(args: argparse.Namespace) -> int:
     except Exception as exc:
         checks.append({"name": "data_dir", "status": "error", "error_type": type(exc).__name__})
     sys.stdout.write(json.dumps({"checks": checks}, ensure_ascii=False, indent=2) + "\n")
-    return 0 if all(check["status"] in {"ok", "configured"} for check in checks) else 5
+    return 0 if all(check["status"] in {"ok", "configured", "optional_missing"} for check in checks) else 5
 
 
 def build_parser() -> argparse.ArgumentParser:

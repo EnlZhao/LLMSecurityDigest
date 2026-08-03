@@ -81,6 +81,14 @@ container titles. The formal tier is routed to deterministic adapters in
   access is attempted when they are absent. Login, MFA, challenge, and
   authorization failures remain visible in the source report with their
   request stage and error type.
+  Legacy v1 root notes that omit `content.venueid` may use only the already
+  registered venue requested by the baseline query; direct identity refreshes
+  never infer that missing value. Explicit child venue IDs such as
+  `Withdrawn_Submission` and `Desk_Rejected_Submission` are terminal outcomes:
+  they remain visible as `rejected_or_withdrawn` incomplete records and can
+  never become accepted candidates. Unified v2 author profiles are reduced
+  only from their explicit `fullname`/`name` fields; a JSON profile object is
+  never serialized as an author string.
 - arXiv uses the Atom API and official BibTeX endpoint. `journal_ref` and
   comments are evidence only until a formal record is matched.
 
@@ -221,6 +229,11 @@ Every adapter returns a structured report. At minimum inspect `status`,
 `records_valid`, `records_filtered`, and `records_incomplete`. A non-zero
 request failure is an operational signal, not permission to switch to an LLM
 or a Scholar snippet.
+
+`doctor` reports an absent `SERPAPI_API_KEY` as `optional_missing` and still
+returns success when all required no-key source checks and storage checks pass.
+It continues to fail for a required source, OpenReview client, or storage
+failure; optional Scholar enrichment is not a prerequisite for fact collection.
 
 ### Evolution source requests
 
