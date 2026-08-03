@@ -290,7 +290,11 @@ python scripts/llm_security/run_daily.py collect \
 collection. It does not issue a second generic HTTP request or print either
 credential. The GitHub collector workflow exposes the two variables as
 optional secret-backed environment values; unset secrets do not make the job
-pretend that OpenReview succeeded.
+pretend that OpenReview succeeded. A service-side anti-bot response is
+reported as `stage: challenge`, distinct from `stage: auth`; adding credentials
+does not by itself prove it will resolve a challenge. Hermes may request
+bounded headless-browser evidence for a registered URL, but the baseline must
+still re-fetch and validate every fact before materialization.
 
 Hermes writes a selection containing only `paper_id`, `score`, `category`,
 `reason`, and required `track` (`core` or `broad`), then runs:

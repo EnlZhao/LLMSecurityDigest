@@ -119,12 +119,14 @@ def openreview_error_message(exc: Exception) -> str:
 
 
 def is_openreview_auth_error(exc: Exception) -> bool:
-    """Classify auth/challenge failures without depending on private classes."""
+    """Classify authentication failures without depending on private classes."""
 
     status = getattr(exc, "status_code", getattr(exc, "code", None))
-    if status in {401, 403}:
-        return True
     marker = f"{type(exc).__name__} {exc}".casefold()
+    if "challenge" in marker:
+        return False
+    if status == 401:
+        return True
     return any(
         token in marker
         for token in (
@@ -132,7 +134,6 @@ def is_openreview_auth_error(exc: Exception) -> bool:
             "credential",
             "forbidden",
             "unauthorized",
-            "challenge",
             "mfa",
             "login",
             "password",
@@ -140,11 +141,28 @@ def is_openreview_auth_error(exc: Exception) -> bool:
     )
 
 
+def openreview_failure_stage(exc: Exception, default: str) -> str:
+    """Expose anti-bot challenges separately from authentication failures."""
+
+    status = getattr(exc, "status_code", getattr(exc, "code", None))
+    marker = f"{type(exc).__name__} {exc}".casefold()
+    # A 401 is always an authentication failure, including protocol messages
+    # that describe an authentication challenge.
+    if status == 401:
+        return "auth"
+    if "challenge" in marker:
+        return "challenge"
+    if status == 403:
+        return "auth"
+    return "auth" if is_openreview_auth_error(exc) else default
+
+
 __all__ = [
     "OPENREVIEW_V1_BASEURL",
     "OPENREVIEW_V2_BASEURL",
     "OpenReviewClientFactory",
     "OpenReviewCredentials",
+    "openreview_failure_stage",
     "is_openreview_auth_error",
     "openreview_error_message",
 ]

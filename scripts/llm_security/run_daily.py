@@ -16,7 +16,7 @@ if str(SRC) not in sys.path:
 from llm_security_digest.papers.env import load_dotenv
 from llm_security_digest.papers.models import DEFAULT_OPENREVIEW_VENUES, SearchPlan, SelectionEntry
 from llm_security_digest.papers.pipeline import collect, default_client, materialize, write_json
-from llm_security_digest.papers.openreview_client import is_openreview_auth_error, openreview_error_message
+from llm_security_digest.papers.openreview_client import openreview_failure_stage, openreview_error_message
 from llm_security_digest.papers.sources import OpenReviewSource
 from llm_security_digest.evolution import EvolutionStore, EvolutionValidationError, apply_overlay, validate_evolution
 
@@ -283,7 +283,7 @@ def command_doctor(args: argparse.Namespace) -> int:
         checks.append({
             "name": "openreview",
             "status": "error",
-            "stage": failure.get("stage", "auth" if is_openreview_auth_error(exc) else "venue_query"),
+            "stage": failure.get("stage", openreview_failure_stage(exc, "venue_query")),
             "error_type": type(exc).__name__,
             "http_status": failure.get("http_status", getattr(exc, "status_code", getattr(exc, "code", None))),
             "message": openreview_error_message(exc),

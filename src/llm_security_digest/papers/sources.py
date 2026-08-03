@@ -23,7 +23,7 @@ from .models import (
 )
 from .openreview_client import (
     OpenReviewClientFactory,
-    is_openreview_auth_error,
+    openreview_failure_stage,
     openreview_error_message,
 )
 from .official import (
@@ -855,12 +855,22 @@ class OpenReviewSource:
         notes = payload.get("notes", []) if isinstance(payload, dict) else []
         if not isinstance(notes, list) or not notes or not _text(notes[0].get("id")):
             raise ValueError("OpenReview venue query returned no paper")
-        return {
+        result = {
             "status": "ok",
             "http_status": response.status,
             "notes": len(notes),
             "client_version": self._last_client_version,
         }
+        if self.errors:
+            # v1 can legitimately serve an old venue after a v2 failure, but
+            # a health check must still make the failed primary path visible.
+            result["status"] = "partial"
+            result["fallback_errors"] = [{
+                key: error[key]
+                for key in ("endpoint", "stage", "error_type", "http_status")
+                if key in error
+            } for error in self.errors]
+        return result
 
     def discover_result(self, plan: SearchPlan) -> DiscoveryResult:
         papers: list[PaperFacts] = []
@@ -906,7 +916,7 @@ class OpenReviewSource:
                 except Exception as exc:
                     error = {
                         "venue_id": venue_id,
-                        "stage": "auth" if is_openreview_auth_error(exc) else "venue_query",
+                        "stage": openreview_failure_stage(exc, "venue_query"),
                         "error_type": type(exc).__name__,
                         "message": openreview_error_message(exc),
                     }
@@ -935,7 +945,7 @@ class OpenReviewSource:
                         venue_errors.append({
                             "venue_id": venue_id,
                             "forum_id": forum_id,
-                            "stage": "auth" if is_openreview_auth_error(exc) else "reply_query",
+                            "stage": openreview_failure_stage(exc, "reply_query"),
                             "error_type": type(exc).__name__,
                             "message": openreview_error_message(exc),
                         })
@@ -1043,7 +1053,7 @@ class OpenReviewSource:
             except Exception as exc:
                 self._requests_failed += 1
                 last_error = exc
-                error_stage = "auth" if is_openreview_auth_error(exc) else stage
+                error_stage = openreview_failure_stage(exc, stage)
                 self.errors.append({
                     "endpoint": version,
                     "stage": error_stage,
