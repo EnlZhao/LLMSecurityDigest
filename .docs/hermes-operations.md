@@ -324,7 +324,7 @@ python scripts/llm_security/run_daily.py materialize \
   --data-dir "$LLMSD_DATA_DIR"
 python scripts/llm_security/run_daily.py outline --facts RUN/facts.json --paper-id PAPER_ID
 python scripts/llm_security/run_daily.py read-section --facts RUN/facts.json \
-  --paper-id PAPER_ID --section-id SECTION_ID --max-chars 12000
+  --paper-id PAPER_ID --section-id SECTION_ID --max-chars 6000
 python scripts/llm_security/run_daily.py find --facts RUN/facts.json \
   --paper-id PAPER_ID --query "prompt injection"
 python scripts/llm_security/render_and_push.py --facts RUN/facts.json \
