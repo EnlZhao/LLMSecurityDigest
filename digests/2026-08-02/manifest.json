@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-02T15:13:05Z",
+  "status": "ok",
+  "target": 10,
+  "published": 10,
+  "shortfall": 0,
+  "selection_decisions": {
+    "arxiv:2606.15609": {
+      "paper_id": "arxiv:2606.15609",
+      "score": 100.0,
+      "category": "Agent Security",
+      "reason": "Historical paper selected for authoritative revalidation"
+    },
+    "arxiv:2603.10749": {
+      "paper_id": "arxiv:2603.10749",
+      "score": 99.0,
+      "category": "Prompt Injection",
+      "reason": "Historical paper selected for authoritative revalidation"
+    },
+    "arxiv:2404.01833": {
+      "paper_id": "arxiv:2404.01833",
+      "score": 98.0,
+      "category": "Jailbreak",
+      "reason": "Historical paper selected for authoritative revalidation"
+    },
+    "arxiv:2604.14604": {
+      "paper_id": "arxiv:2604.14604",
+      "score": 97.0,
+      "category": "Prompt Injection",
+      "reason": "Historical paper selected for authoritative revalidation"
+    },
+    "arxiv:2511.05797": {
+      "paper_id": "arxiv:2511.05797",
+      "score": 96.0,
+      "category": "Prompt Injection",
+      "reason": "Historical paper selected for authoritative revalidation"
+    },
+    "arxiv:2605.24312": {
+      "paper_id": "arxiv:2605.24312",
+      "score": 95.0,
+      "category": "Jailbreak",
+      "reason": "Historical paper selected for authoritative revalidation"
+    },
+    "arxiv:2601.02751": {
+      "paper_id": "arxiv:2601.02751",
+      "score": 94.0,
+      "category": "Privacy",
+      "reason": "Historical paper selected for authoritative revalidation"
+    },
+    "arxiv:2507.16372": {
+      "paper_id": "arxiv:2507.16372",
+      "score": 93.0,
+      "category": "Privacy",
+      "reason": "Historical paper selected for authoritative revalidation"
+    },
+    "arxiv:2508.09442": {
+      "paper_id": "arxiv:2508.09442",
+      "score": 92.0,
+      "category": "Privacy",
+      "reason": "Historical paper selected for authoritative revalidation"
+    },
+    "arxiv:2606.27511": {
+      "paper_id": "arxiv:2606.27511",
+      "score": 91.0,
+      "category": "Backdoor",
+      "reason": "Historical paper selected for authoritative revalidation"
+    }
+  },
+  "rejected": [],
+  "source_reports": [
+    {
+      "source": "arxiv",
+      "status": "ok",
+      "discovered": 10,
+      "accepted": 10
+    }
+  ],
+  "scholar": {
+    "configured": true,
+    "calls": 10
+  }
+}

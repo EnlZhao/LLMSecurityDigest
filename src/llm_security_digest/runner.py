@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import shlex
 import subprocess
 import sys
@@ -22,7 +21,7 @@ def _build_codex_cmd(run_dir: Path) -> list[str]:
         "-m", "MiniMax-M3",
         "-c", 'model_reasoning_effort="high"',
         "--sandbox", "workspace-write",
-        "--cd", str(run_dir),
+        "--cd", str(config.PROJECT_ROOT),
         "--skip-git-repo-check",
         "-",
     ]
@@ -42,7 +41,6 @@ def run_once() -> int:
             return 0
 
         run_dir = cache.create_run_dir()
-        (run_dir / "papers").mkdir(exist_ok=True)
         log_lines.append(f"run_dir: {run_dir}")
         status = 1
         try:

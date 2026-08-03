@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """LLM Security Digest — GitHub Pages static site generator.
 
-布局参考 Notion / mkdocs-material：
+布局采用文档阅读式双栏结构：
 - 左侧 sticky 侧边栏（TOC + 论文跳转）
 - 右侧主内容区（论文卡片）
 - header 极简 + 字体清晰
@@ -146,7 +146,7 @@ def site_footer(prefix: str = "") -> str:
 
 
 # -----------------------------------------------------------------------------
-# 摘要页（每日 20 篇）— 两栏：左侧 sidebar（TOC + 分类跳转），右侧论文卡片
+# 摘要页（每日最多 10 篇）— 两栏：左侧 sidebar（TOC + 分类跳转），右侧论文卡片
 # -----------------------------------------------------------------------------
 def render_digest_page(date_str: str, readme_path: Path) -> str:
     md = frontmatter.load(readme_path)
@@ -186,6 +186,9 @@ def _field(body: str, label: str, stop: str = r"\n\*\*") -> str:
 
 
 def _bilingual_value(body: str, label: str, lang: str = "ZH") -> str:
+    generated = _field(body, rf"{label}（LLM 解读）")
+    if generated:
+        return generated
     block = _field(body, rf"{label} \(原文 \+ 中文\)")
     match = re.search(rf"- {lang}:\s*(.+?)(?=\n- (?:EN|ZH):|\Z)", block, re.DOTALL)
     return match.group(1).strip() if match else ""
@@ -239,7 +242,11 @@ def parse_papers_from_md(content: str) -> list[dict]:
 
         paper["authors"] = _field(body, "作者", r"\n\*\*")
         paper["source"] = _field(body, "会议/来源", r"\n\*\*")
-        paper["url"] = _field(body, "链接", r"\n\*\*").split()[0] if _field(body, "链接", r"\n\*\*") else ""
+        link_line = _field(body, "链接", r"\n\*\*")
+        markdown_urls = re.findall(r"\]\((https?://[^)]+)\)", link_line)
+        paper["url"] = markdown_urls[0] if markdown_urls else (
+            re.search(r"https?://\S+", link_line).group(0) if re.search(r"https?://\S+", link_line) else ""
+        )
         paper["problem"] = _bilingual_value(body, "问题")
         paper["method"] = _bilingual_value(body, "方法")
         paper["result"] = _bilingual_value(body, "结果")

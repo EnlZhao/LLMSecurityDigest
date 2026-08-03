@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""把 selected-20-clean.json 渲染成 digests/YYYY-MM-DD/{README.md, papers/*.md, bibtex.bib}，git add/commit/push。"""
+"""Render a verified, frozen facts snapshot. This command performs no network I/O."""
 from __future__ import annotations
 
 import argparse
@@ -9,253 +9,177 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from urllib import request, error
 
-REPO = Path("/home/ubuntu/LLMSecurityDigest")
-ARXIV_BIBTEX = "https://arxiv.org/bibtex/{id}"
-ARXIV_ABS = "https://arxiv.org/abs/{id}"
-CROSSREF_BIBTEX = "https://api.crossref.org/works/{doi}/transform/application/x-bibtex"
+REPO = Path(__file__).resolve().parents[2]
+SRC = REPO / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
 
-
-def fetch_bibtex(arxiv_id: str) -> str:
-    """Primary path: arxiv official BibTeX endpoint."""
-    try:
-        req = request.Request(ARXIV_BIBTEX.format(id=arxiv_id),
-                              headers={"User-Agent": "Mozilla/5.0"})
-        with request.urlopen(req, timeout=20) as r:
-            return r.read().decode("utf-8").strip()
-    except Exception:
-        return ""
+from llm_security_digest.papers.models import PaperFacts
+from llm_security_digest.papers.pipeline import load_analysis, write_json
 
 
-def fetch_arxiv_doi(arxiv_id: str) -> str:
-    """Scrape arxiv abs page for published-DOI. arxiv often shows 'DOI: 10.xxxx/yyyy'."""
-    try:
-        req = request.Request(ARXIV_ABS.format(id=arxiv_id),
-                              headers={"User-Agent": "Mozilla/5.0"})
-        with request.urlopen(req, timeout=20) as r:
-            html = r.read().decode("utf-8", errors="replace")
-        # 找 DOI pattern（避免误匹配其他数字）
-        m = re.search(r"doi\.org/(10\.\d{4,9}/[^\s\"<>]+)", html)
-        if m:
-            return m.group(1).rstrip(".")
-        # 备用：找 abs 页面的 <meta name="citation_doi">
-        m = re.search(r'<meta name="citation_doi" content="([^"]+)"', html)
-        if m:
-            return m.group(1).strip()
-        return ""
-    except Exception:
-        return ""
+def _analysis_value(analysis: dict, key: str, default: str = "（待解读）") -> str:
+    value = analysis.get(key)
+    return str(value).strip() if value is not None and str(value).strip() else default
 
 
-def fetch_crossref_bibtex(doi: str) -> str:
-    """CrossRef fallback: precise DOI lookup → standard BibTeX. No fuzzy search."""
-    if not doi:
-        return ""
-    try:
-        req = request.Request(CROSSREF_BIBTEX.format(doi=doi),
-                              headers={"User-Agent": "hermes-citation"})
-        with request.urlopen(req, timeout=20) as r:
-            return r.read().decode("utf-8").strip()
-    except Exception:
-        return ""
-
-
-def get_bibtex(p: dict) -> str:
-    """Three-tier BibTeX lookup with strict fact preservation:
-    1. arxiv /bibtex/<id> — official arxiv BibTeX
-    2. arxiv abs page → DOI → CrossRef — published version
-    3. Constructed from arxiv metadata — title/authors/year from arxiv (never hallucinated)
-    """
-    arxiv_id = p.get("arxiv_id", "")
-    # Tier 1: arxiv official BibTeX
-    if arxiv_id:
-        bib = fetch_bibtex(arxiv_id)
-        if bib:
-            return bib
-        # Tier 2: arxiv DOI → CrossRef
-        doi = fetch_arxiv_doi(arxiv_id)
-        if doi:
-            bib = fetch_crossref_bibtex(doi)
-            if bib:
-                return bib
-    # Tier 3: Constructed from arxiv metadata (always verified against arxiv data)
-    return fallback_bibtex(p)
-
-
-def fallback_bibtex(p: dict) -> str:
-    """Construct BibTeX from arxiv metadata. Title/authors/year are 100% from arxiv API,
-    not hallucinated. Used only as last resort when both arxiv /bibtex and CrossRef fail."""
-    title = p["title"].replace("{", "").replace("}", "")
-    authors = " and ".join(p.get("authors", [])[:10])
-    year = (p.get("published", "") or "????")[:4]
-    last = (p.get("authors", ["anon"])[0].split()[-1] if p.get("authors") else "anon")
-    key = f"{last}{year}_{p['arxiv_id'].replace('/', '').replace('.', '')}"
-    return f"""@misc{{{key},
-  title  = {{{{{title}}}}},
-  author = {{{authors}}},
-  year   = {{{year}}},
-  eprint = {{{p['arxiv_id']}}},
-  archivePrefix = {{arXiv}},
-  primaryClass  = {{{p.get('primary_category', 'cs.CR')}}},
-  url    = {{https://arxiv.org/abs/{p['arxiv_id']}}}
-}}"""
-
-
-def render_paper_md(p: dict, idx: int) -> str:
-    authors = ", ".join(p.get("authors", [])[:5])
-    if len(p.get("authors", [])) > 5:
-        authors += f" 等 ({len(p['authors'])} 人)"
-    affils = "; ".join(sorted(set(p.get("affiliations", [])))) or "未在 arXiv 元数据中提供"
-    venue = p.get("venue_or_source", f"arXiv preprint `{p.get('primary_category', 'cs.CR')}`")
-    venue_date = (p.get("published", "") or "")[:10]
-    classification = "顶会接收" if any(v in venue for v in ["USENIX","S&P","CCS","NDSS","NeurIPS","ICML","ICLR","AAAI","ACL","EMNLP"]) else "arXiv"
-
-    bib = get_bibtex(p)
-
-    return f"""### [{idx}]. {p['title']}
+def render_paper_md(paper: PaperFacts, analysis: dict, idx: int) -> str:
+    paper.validate_materialized()
+    authors = ", ".join(paper.authors)
+    source = paper.venue or f"arXiv preprint `{paper.primary_category or 'unknown'}`"
+    classification = {"accepted": "会议接收", "published": "正式发表", "preprint": "arXiv 预印本"}[paper.publication_status]
+    published_date = (paper.published_at or "")[:10]
+    category = _analysis_value(analysis, "category", "Other")
+    scholar_link = paper.platform_links.get("google_scholar", "")
+    scholar_line = f" | [Google Scholar]({scholar_link})" if scholar_link else ""
+    source_comment = (
+        f"**来源备注（权威来源原文）**：{paper.source_comment}\n"
+        if paper.source_comment
+        else ""
+    )
+    return f"""### [{idx}]. {paper.title}
 
 **作者**：{authors}
-**单位**：{affils}
-**会议/来源**：{venue} ({venue_date})
-**链接**：https://arxiv.org/abs/{p['arxiv_id']}
+**会议/来源**：{source} ({published_date})
+{source_comment}**链接**：[论文主页]({paper.landing_url}) | [正文]({paper.pdf_url}){scholar_line}
 **分类**：{classification}
+**研究类别**：{category}
 
-**Abstract (EN — 原文)**：
+**Abstract (EN — 权威来源原文)**：
 
-> {p['summary_en']}
+> {paper.abstract}
 
-**摘要 (中文)**：
+**摘要 (中文，LLM 生成)**：
 
-{p.get('summary_zh', '（待补充）')}
+{_analysis_value(analysis, 'summary_zh')}
 
-**问题 (原文 + 中文)**：
+**问题（LLM 解读）**：
 
-- EN: {p.get('problem_en', '（待补充）')}
-- ZH: {p.get('problem_zh', '（待补充）')}
+{_analysis_value(analysis, 'problem_zh')}
 
-**方法 (原文 + 中文)**：
+**方法（LLM 解读）**：
 
-- EN: {p.get('method_en', '（待补充）')}
-- ZH: {p.get('method_zh', '（待补充）')}
+{_analysis_value(analysis, 'method_zh')}
 
-**结果 (原文 + 中文)**：
+**结果（LLM 解读）**：
 
-- EN: {p.get('result_en', '（待补充）')}
-- ZH: {p.get('result_zh', '（待补充）')}
+{_analysis_value(analysis, 'result_zh')}
 
-**贡献 (原文 + 中文)**：
+**贡献（LLM 解读）**：
 
-- EN: {p.get('contribution_en', '（待补充）')}
-- ZH: {p.get('contribution_zh', '（待补充）')}
+{_analysis_value(analysis, 'contribution_zh')}
 
-**BibTeX**：
+**BibTeX（权威端点原文）**：
 
 ```bibtex
-{bib}
+{paper.bibtex}
 ```
 
 ---
 """
 
 
-def render_readme(papers: list[dict], date_str: str) -> str:
-    # 分类索引
-    cat_counts: dict[str, list[int]] = {}
-    for i, p in enumerate(papers, 1):
-        cat = p.get("category", "Other")
-        cat_counts.setdefault(cat, []).append(i)
-
+def render_readme(papers: list[PaperFacts], analyses: dict[str, dict], date_str: str) -> str:
+    categories: dict[str, list[int]] = {}
+    for index, paper in enumerate(papers, 1):
+        category = _analysis_value(analyses.get(paper.paper_id, {}), "category", "Other")
+        categories.setdefault(category, []).append(index)
     parts = [
         f"# LLM Security Daily — {date_str}",
         "",
-        f"> 20 篇高质量 LLM Security 论文 | 来源：AAAI / IEEE S&P / USENIX Security / CCS / NDSS / NeurIPS / ICML / ICLR / arXiv",
-        f"> 模型：MiniMax-M3 (max reasoning) | 仓库：git@github.com:EnlZhao/LLMSecurityDigest.git",
+        f"> {len(papers)} 篇通过元数据、BibTeX 与正文身份校验的论文",
+        "> 事实字段由确定性脚本生成；翻译与解读由 LLM 生成并明确标注",
         f"> 生成时间：{time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}",
         "",
         "## 分类索引",
         "",
     ]
-    for cat, idxs in cat_counts.items():
-        parts.append(f"- **{cat}**：#{', #'.join(map(str, idxs))}")
-    parts.append("")
-    parts.append("---")
-    parts.append("")
-    for i, p in enumerate(papers, 1):
-        parts.append(render_paper_md(p, i))
+    for category, indexes in categories.items():
+        parts.append(f"- **{category}**：#{', #'.join(map(str, indexes))}")
+    parts.extend(["", "---", ""])
+    for index, paper in enumerate(papers, 1):
+        parts.append(render_paper_md(paper, analyses.get(paper.paper_id, {}), index))
     return "\n".join(parts).rstrip() + "\n"
 
 
-def render_bibtex(papers: list[dict]) -> str:
-    parts = [f"% LLM Security Daily — {time.strftime('%Y-%m-%d', time.gmtime())}", ""]
-    for i, p in enumerate(papers, 1):
-        bib = get_bibtex(p)
-        parts.append(f"% [{i}] {p['title']}")
-        parts.append(bib)
-        parts.append("")
-    return "\n".join(parts).rstrip() + "\n"
-
-
-def git_push(date_str: str) -> tuple[bool, str]:
-    try:
-        subprocess.run(["git", "add", f"digests/{date_str}/"], cwd=REPO, check=True, capture_output=True)
-        subprocess.run(
-            ["git", "commit", "-m", f"digest: {date_str} — LLM Security daily digest"],
-            cwd=REPO, check=True, capture_output=True,
-        )
-        for attempt in range(1, 4):
-            r = subprocess.run(["git", "push", "origin", "main"], cwd=REPO, capture_output=True, text=True, timeout=30)
-            if r.returncode == 0:
-                sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO, capture_output=True, text=True).stdout.strip()
-                return True, sha
-            subprocess.run(["git", "pull", "--rebase"], cwd=REPO, capture_output=True)
-        return False, "push failed after 3 attempts"
-    except subprocess.CalledProcessError as e:
-        return False, f"git error: {e.stderr.decode() if e.stderr else str(e)}"
+def git_push(repo: Path, date_str: str) -> tuple[bool, str]:
+    subprocess.run(["git", "add", f"digests/{date_str}/", "docs/"], cwd=repo, check=True)
+    commit = subprocess.run(
+        ["git", "commit", "-m", f"digest: {date_str} LLM Security daily digest"],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+    )
+    if commit.returncode != 0:
+        return False, commit.stderr.strip() or commit.stdout.strip()
+    push = subprocess.run(["git", "push", "origin", "main"], cwd=repo, capture_output=True, text=True, timeout=60)
+    if push.returncode != 0:
+        return False, push.stderr.strip()
+    sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=repo, capture_output=True, text=True).stdout.strip()
+    return True, sha
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--input", type=Path, default=REPO / "cache" / "selected-20-clean.json")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--facts", type=Path, required=True)
+    parser.add_argument("--manifest", type=Path, required=True)
+    parser.add_argument("--analysis", type=Path, required=True)
+    parser.add_argument("--date", required=True)
+    parser.add_argument("--repo", type=Path, default=REPO)
+    parser.add_argument("--build-site", action="store_true")
     parser.add_argument("--push", action="store_true")
-    parser.add_argument("--date", default=time.strftime("%Y-%m-%d"))
     args = parser.parse_args()
 
-    if not args.input.exists():
-        print(f"FATAL: input not found: {args.input}", file=sys.stderr)
+    facts_payload = json.loads(args.facts.read_text(encoding="utf-8"))
+    manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+    raw_papers = facts_payload.get("papers") if isinstance(facts_payload, dict) else None
+    if not isinstance(raw_papers, list) or not isinstance(manifest, dict):
+        print("FATAL: invalid facts or manifest snapshot", file=sys.stderr)
         return 1
-
-    payload = json.loads(args.input.read_text(encoding="utf-8"))
-    papers = payload.get("papers", [])
+    papers = [PaperFacts.from_dict(value) for value in raw_papers]
     if not papers:
-        print("FATAL: no papers in input", file=sys.stderr)
+        print("FATAL: no verified papers", file=sys.stderr)
         return 1
+    decisions = manifest.get("selection_decisions")
+    if not isinstance(decisions, dict):
+        print("FATAL: invalid materialize decisions", file=sys.stderr)
+        return 1
+    decision_ids = set(decisions)
+    paper_ids = {paper.paper_id for paper in papers}
+    if (
+        len(paper_ids) != len(papers)
+        or manifest.get("status") != "ok"
+        or manifest.get("published") != len(papers)
+        or decision_ids != paper_ids
+    ):
+        print("FATAL: facts and materialize manifest do not agree", file=sys.stderr)
+        return 1
+    analyses = load_analysis(args.analysis, {paper.paper_id for paper in papers})
 
-    # 渲染（bibtex 在 render_paper_md 内通过 get_bibtex 三层回退拉取）
-    out_dir = REPO / "digests" / args.date
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "papers").mkdir(exist_ok=True)
-    readme = render_readme(papers, args.date)
-    (out_dir / "README.md").write_text(readme, encoding="utf-8")
-    bib = render_bibtex(papers)
-    (out_dir / "bibtex.bib").write_text(bib, encoding="utf-8")
-    for i, p in enumerate(papers, 1):
-        slug = re.sub(r"[^a-z0-9]+", "-", p["title"].lower())[:40].strip("-")
-        path = out_dir / "papers" / f"{i:02d}_{p['arxiv_id'].replace('/', '_')}_{slug}.md"
-        path.write_text(render_paper_md(p, i), encoding="utf-8")
+    output_dir = args.repo.resolve() / "digests" / args.date
+    papers_dir = output_dir / "papers"
+    papers_dir.mkdir(parents=True, exist_ok=True)
+    readme = render_readme(papers, analyses, args.date)
+    (output_dir / "README.md").write_text(readme, encoding="utf-8")
+    bibtex_parts = [f"% LLM Security Daily — {args.date}", ""]
+    for index, paper in enumerate(papers, 1):
+        bibtex_parts.extend([f"% [{index}] {paper.title}", paper.bibtex or "", ""])
+        slug = re.sub(r"[^a-z0-9]+", "-", paper.title.casefold())[:48].strip("-")
+        filename = f"{index:02d}_{re.sub(r'[^a-zA-Z0-9_.-]+', '_', paper.source_id)}_{slug}.md"
+        (papers_dir / filename).write_text(render_paper_md(paper, analyses.get(paper.paper_id, {}), index), encoding="utf-8")
+    (output_dir / "bibtex.bib").write_text("\n".join(bibtex_parts).rstrip() + "\n", encoding="utf-8")
+    write_json(output_dir / "facts.json", facts_payload)
+    write_json(output_dir / "analysis.json", {"papers": list(analyses.values())})
+    write_json(output_dir / "manifest.json", manifest)
+    print(f"[render] wrote {len(papers)} verified papers to {output_dir}", file=sys.stderr)
 
-    print(f"[render] wrote {len(papers)} papers to {out_dir}", file=sys.stderr)
-
+    if args.build_site:
+        subprocess.run([sys.executable, str(args.repo / "scripts" / "build_github_pages.py")], cwd=args.repo, check=True)
     if args.push:
-        ok, info = git_push(args.date)
+        ok, info = git_push(args.repo, args.date)
         print(f"[push] {'OK' if ok else 'FAIL'}: {info}", file=sys.stderr)
-        if not ok:
-            return 2
-        # 输出 README 内容到 stdout
-        sys.stdout.write(readme)
-        sys.stdout.write(f"\n\n✅ 已 push 到 GitHub: `{info}` | {args.date}\n")
-        sys.stdout.write("💡 回复论文编号（如 #3）开始详细阅读\n")
-
+        return 0 if ok else 2
     return 0
 
 
