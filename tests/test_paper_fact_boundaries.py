@@ -7,7 +7,12 @@ from llm_security_digest.papers.models import PaperFacts, SelectionEntry
 from llm_security_digest.papers.openreview_client import openreview_failure_stage
 from llm_security_digest.papers import pipeline
 from llm_security_digest.papers.official import _pdf_url, _tree
-from llm_security_digest.papers.sources import ArxivSource, OpenReviewSource, reconcile_arxiv_to_formal
+from llm_security_digest.papers.sources import (
+    ArxivSource,
+    OpenReviewSource,
+    discovery_query_for_general_index,
+    reconcile_arxiv_to_formal,
+)
 
 
 def _paper(*, paper_id: str, source: str, source_id: str, title: str, authors: list[str], doi: str | None = None) -> PaperFacts:
@@ -138,6 +143,12 @@ def test_formal_deduplication_requires_strict_identity_proof() -> None:
         "duplicate_id": duplicate.paper_id,
         "method": "doi_exact",
     }]
+
+
+def test_general_indexes_do_not_receive_arxiv_field_prefixes() -> None:
+    query = 'abs:"jailbreak" OR abs:"prompt injection" AND ti:security'
+
+    assert discovery_query_for_general_index(query) == '"jailbreak" OR "prompt injection" AND security'
 
 
 def test_openreview_v1_compatibility_keeps_v2_challenge_visible() -> None:

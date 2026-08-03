@@ -147,6 +147,9 @@ never a fact authority for title, authors, abstract, venue, URLs, or BibTeX.
 
 ### 2026-08-04
 
+- Shared daily queries now retain arXiv field syntax for the Atom API while
+  removing those field prefixes for Crossref and IEEE Xplore. This keeps the
+  same keywords portable across the registered formal discovery APIs.
 - Formal-source records no longer fabricate `YYYY-01-01` from a proceedings
   year. An unknown authoritative date remains unknown, while the baseline
   source ID retains only the year needed to rebuild an official route.

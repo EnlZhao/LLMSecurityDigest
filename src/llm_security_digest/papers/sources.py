@@ -132,6 +132,22 @@ def _strip_markup(value: str) -> str:
     return " ".join(html.unescape(value).split())
 
 
+def discovery_query_for_general_index(query: str) -> str:
+    """Translate arXiv field prefixes to portable Boolean search text.
+
+    Search plans are shared by arXiv, Crossref, and IEEE Xplore.  The latter
+    two accept ordinary bibliographic/Boolean text rather than arXiv's
+    ``abs:``/``ti:`` field syntax.  Removing only the registered field prefix
+    retains the user's terms and grouping while avoiding source-specific
+    syntax being sent verbatim to a different API.
+    """
+    return re.sub(
+        r"(?i)\b(?:abs|ti|au|cat|all):(?=(?:\"|[^\s]))",
+        "",
+        str(query or ""),
+    )
+
+
 def _provenance(response: HttpResponse, *, source: str) -> dict[str, Any]:
     provenance = {
         "source": source,
@@ -1298,7 +1314,7 @@ class CrossrefSource:
                 if plan.date_to:
                     filters.append(f"until-pub-date:{plan.date_to}")
                 params = {
-                    "query.bibliographic": query,
+                    "query.bibliographic": discovery_query_for_general_index(query),
                     "query.container-title": query_container,
                     "filter": ",".join(filters),
                     "rows": str(min(plan.max_results_per_query, 1000, plan.max_results_per_venue - venue_papers)),
@@ -1726,7 +1742,13 @@ class IeeeXploreSource:
                 if len(venue_papers) >= plan.max_results_per_venue:
                     break
                 limit = min(plan.max_results_per_query, 100, plan.max_results_per_venue - len(venue_papers))
-                request_url, provenance_url = self._query_url(spec=spec, query=query, api_key=self.api_key, max_records=limit, start_record=1)
+                request_url, provenance_url = self._query_url(
+                    spec=spec,
+                    query=discovery_query_for_general_index(query),
+                    api_key=self.api_key,
+                    max_records=limit,
+                    start_record=1,
+                )
                 requests_attempted += 1
                 try:
                     response = self.client.get(
