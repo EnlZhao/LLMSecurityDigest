@@ -40,7 +40,15 @@ container titles. The formal tier is routed to deterministic adapters in
 
 - USENIX Security and NDSS use their proceedings pages and citation metadata.
 - ACL/EMNLP use ACL Anthology.
-- ICML uses PMLR; NeurIPS uses the NeurIPS proceedings pages.
+- ICML uses PMLR; NeurIPS uses the NeurIPS proceedings pages. PMLR full text
+  may be served from its official `mlresearch` raw GitHub repository, but only
+  at the baseline-verified path
+  `/mlresearch/v<volume>/main/assets/<paper-key>/<paper-key>.pdf`, where both
+  key occurrences match the refreshed PMLR source ID. NeurIPS may expose
+  BibTeX at its fixed numeric export endpoint
+  `/paper_files/paper/<record>-/bibtex`; this is accepted only on
+  `proceedings.neurips.cc`, without query parameters or URL credentials. These
+  URL grammars are baseline checks, not discovery hints Hermes may change.
 - CVPR uses CVF Open Access pages at `openaccess.thecvf.com`; it collects
   detail links from `CVPR<year>?day=all` and accepts only official detail/PDF
   URLs, citation metadata, DOI metadata, and official BibTeX links or inline

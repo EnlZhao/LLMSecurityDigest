@@ -401,7 +401,16 @@ def _bibtex_source_url(paper: PaperFacts) -> str | None:
     }.get(source, set())
     if isinstance(value, str) and value.startswith("https://") and trusted_hosts:
         parsed = parse.urlsplit(value)
-        if (
+        is_neurips_export = (
+            source == "neurips"
+            and parsed.hostname
+            and parsed.hostname.casefold().rstrip(".") == "proceedings.neurips.cc"
+            and parsed.query == ""
+            and parsed.username is None
+            and parsed.password is None
+            and re.fullmatch(r"/paper_files/paper/[1-9]\d*-/bibtex", parsed.path)
+        )
+        if is_neurips_export or (
             parsed.hostname
             and parsed.hostname.casefold().rstrip(".") in trusted_hosts
             and route_id.casefold() in parsed.path.casefold()
@@ -424,7 +433,11 @@ def _bibtex_hosts(paper: PaperFacts) -> frozenset[str] | None:
         "acl": frozenset({"aclanthology.org"}),
         "emnlp": frozenset({"aclanthology.org"}),
         "pmlr": frozenset({"proceedings.mlr.press"}),
+        "neurips": frozenset({"proceedings.neurips.cc"}),
         "ijcai": frozenset({"www.ijcai.org"}),
+        "usenix": frozenset({"www.usenix.org"}),
+        "ndss": frozenset({"www.ndss-symposium.org"}),
+        "aaai_ojs": frozenset({"ojs.aaai.org"}),
         "cvpr": frozenset({"openaccess.thecvf.com"}),
         "eccv": frozenset({"www.ecva.net"}),
     }.get(str(paper.source or "").casefold())

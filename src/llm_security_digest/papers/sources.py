@@ -53,6 +53,24 @@ IEEE_XPLORE_API_URL = "https://ieeexploreapi.ieee.org/api/v1/search/articles"
 IEEE_XPLORE_API_KEY_ENV = "IEEE_XPLORE_API_KEY"
 IEEE_XPLORE_VENUES = frozenset({"ieee-sp", "tdsc", "tifs"})
 
+
+def _v1_submission_invitation(venue_id: str) -> str:
+    """Map a registered v2 venue id to the OpenReview v1 invitation id."""
+    value = str(venue_id or "").strip().rstrip("/")
+    if re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._-]*/(?:19|20)\d{2}/Conference/-/Submission",
+        value,
+        flags=re.IGNORECASE,
+    ):
+        return value
+    if not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9._-]*/(?:19|20)\d{2}/Conference",
+        value,
+        flags=re.IGNORECASE,
+    ):
+        raise ValueError(f"invalid OpenReview venue id for v1 invitation: {venue_id!r}")
+    return f"{value}/-/Submission"
+
 # These are baseline routing rules.  A candidate may carry a landing URL for
 # display, but materialization derives the request URL from this table and the
 # validated source id instead of trusting candidate-provided URLs.
@@ -194,7 +212,9 @@ def official_route_for_paper(paper: PaperFacts) -> tuple[str, str, frozenset[str
         match = re.fullmatch(r"((?:19|20)\d{2}):([A-Za-z0-9][A-Za-z0-9._-]{1,180})", source_id)
         if not match:
             raise ValueError("invalid NDSS source id")
-        url = f"https://www.ndss-symposium.org/ndss{match.group(1)}/ndss-paper/{match.group(2)}/"
+        # Current NDSS detail pages are canonicalized without the symposium
+        # year segment; the year remains part of the source id for identity.
+        url = f"https://www.ndss-symposium.org/ndss-paper/{match.group(2)}/"
     elif source == "cvpr":
         match = re.fullmatch(r"((?:19|20)\d{2}):([A-Za-z0-9][A-Za-z0-9._-]{1,240})", source_id)
         if not match:
@@ -235,7 +255,17 @@ def trusted_fulltext_url(paper: PaperFacts, url: str) -> bool:
     parsed = parse.urlsplit(url)
     if str(paper.source).casefold() != "pmlr" or (parsed.hostname or "").casefold().rstrip(".") != "raw.githubusercontent.com":
         return True
-    return bool(re.fullmatch(r"/mlresearch/v\d+/main/assets/[A-Za-z0-9][A-Za-z0-9._-]*\.pdf", parsed.path))
+    paper_key, separator, volume = str(paper.source_id or "").rpartition(":")
+    return bool(
+        separator
+        and not parsed.query
+        and parsed.username is None
+        and parsed.password is None
+        and re.fullmatch(
+            rf"/mlresearch/{re.escape(volume)}/main/assets/{re.escape(paper_key)}/{re.escape(paper_key)}\.pdf",
+            parsed.path,
+        )
+    )
 
 
 def _trusted_crossref_hosts(spec: Any) -> frozenset[str]:
@@ -977,7 +1007,7 @@ class OpenReviewSource:
                     if version == "v2":
                         client_params["content"] = {"venueid": params["content.venueid"]}
                     else:
-                        client_params["invitation"] = params["content.venueid"]
+                        client_params["invitation"] = _v1_submission_invitation(params["content.venueid"])
                 for key in ("id", "forum", "replyto", "details"):
                     if key in params:
                         client_params[key] = params[key]
@@ -990,14 +1020,25 @@ class OpenReviewSource:
                 if not isinstance(raw_notes, list):
                     raise ValueError("OpenReview client returned non-list notes")
                 notes = [_normalize_openreview_note(note) for note in raw_notes]
-                self._requests_succeeded += 1
-                self._last_client_version = version
                 # A successful but empty v2 response can be a compatibility
                 # gap for older venue deployments. Probe v1 once at the first
                 # page before accepting an empty result; later empty pages are
                 # normal pagination termination and must not restart there.
                 if not notes and version == "v2" and int(params.get("offset", 0)) == 0:
+                    self._requests_succeeded += 1
+                    self._last_client_version = version
                     continue
+                # An empty first-page v1 response is not a valid discovery
+                # result: it usually means the invitation route was wrong.
+                # Surface it as an error rather than silently reporting zero
+                # papers and losing the fallback failure in observability.
+                if not notes and version == "v1" and stage == "venue_query" and int(params.get("offset", 0)) == 0:
+                    raise ValueError(
+                        "OpenReview v1 submission invitation returned no notes: "
+                        f"{client_params.get('invitation', '')}"
+                    )
+                self._requests_succeeded += 1
+                self._last_client_version = version
                 return _openreview_response(notes, params=params, endpoint=endpoint)
             except Exception as exc:
                 self._requests_failed += 1

@@ -183,6 +183,40 @@ def _strip_abstract_label(value: str) -> str:
     return re.sub(r"^abstract\s*:?[ \t]*", "", text, flags=re.IGNORECASE)
 
 
+def _split_top_level(value: str, delimiter: str = ",") -> list[str]:
+    """Split a delimited field without breaking parenthesized affiliations."""
+    values: list[str] = []
+    start = 0
+    depth = 0
+    for index, char in enumerate(value):
+        if char in "([{":
+            depth += 1
+        elif char in ")]}":
+            depth = max(depth - 1, 0)
+        elif depth == 0 and value.startswith(delimiter, index):
+            item = _clean(value[start:index])
+            if item:
+                values.append(item)
+            start = index + len(delimiter)
+    item = _clean(value[start:])
+    if item:
+        values.append(item)
+    return values
+
+
+def _author_list(value: str) -> list[str]:
+    """Normalize comma/``and`` separated author labels from proceedings pages."""
+    value = re.sub(r"\s+and\s+", ",", value, flags=re.IGNORECASE)
+    return [_clean(item) for item in _split_top_level(value) if _clean(item)]
+
+
+def _source_year(source_id: str, fallback_year: int | None = None) -> int | None:
+    match = re.match(r"((?:19|20)\d{2}):", str(source_id or ""))
+    if match:
+        return int(match.group(1))
+    return int(fallback_year) if fallback_year is not None else None
+
+
 def _pdf_url(root: _Node, base: str) -> str:
     values = _meta(root, "citation_pdf_url")
     if values and values[0].startswith("https://"):
@@ -312,8 +346,19 @@ def _make_paper(
         if "pdf_url" not in missing:
             missing.append("pdf_url")
     elif spec.key == "icml" and pdf_host.casefold().rstrip(".") == "raw.githubusercontent.com":
-        path = urlparse(pdf_url).path
-        if not re.fullmatch(r"/mlresearch/v\d+/main/assets/[A-Za-z0-9][A-Za-z0-9._-]*\.pdf", path):
+        parsed_pdf = urlparse(pdf_url)
+        path = parsed_pdf.path
+        paper_key, separator, volume = source_id.rpartition(":")
+        if (
+            not separator
+            or parsed_pdf.query
+            or parsed_pdf.username is not None
+            or parsed_pdf.password is not None
+            or not re.fullmatch(
+                rf"/mlresearch/{re.escape(volume)}/main/assets/{re.escape(paper_key)}/{re.escape(paper_key)}\.pdf",
+                path,
+            )
+        ):
             if "pdf_url" not in missing:
                 missing.append("pdf_url")
     if missing:
@@ -665,6 +710,36 @@ def parse_official_detail(
             url=url,
             source_id=source_id,
             year=fallback_year,
+            response=response,
+        )
+    adapter_name = str(spec.adapter or spec.key).casefold()
+    if adapter_name == "ijcai":
+        return IJCAIAdapter.parse_detail(
+            html_text,
+            spec=spec,
+            url=url,
+            source_id=source_id,
+            year=_source_year(source_id, fallback_year),
+            response=response,
+        )
+    if adapter_name == "usenix":
+        return USENIXAdapter.parse_paper(
+            html_text,
+            spec=spec,
+            url=url,
+            year=_source_year(source_id, fallback_year),
+            source_id=source_id,
+            refreshed=True,
+            response=response,
+        )
+    if adapter_name == "ndss":
+        return NDSSAdapter.parse_paper(
+            html_text,
+            spec=spec,
+            url=url,
+            year=_source_year(source_id, fallback_year),
+            source_id=source_id,
+            refreshed=True,
             response=response,
         )
     root = _tree(html_text)
@@ -1293,15 +1368,75 @@ class IJCAIAdapter(OfficialAdapter):
     adapter = "ijcai"
 
     @staticmethod
+    def parse_detail(
+        html_text: str,
+        *,
+        spec: VenueSpec,
+        url: str,
+        source_id: str | None = None,
+        year: int | None = None,
+        response: HttpResponse | None = None,
+    ) -> ParsedRecord:
+        root = _tree(html_text)
+        title = (_meta(root, "citation_title") or [
+            _clean((_first(root, class_name="page-title") or _first(root, tag="h1") or _Node()).text())
+        ])[0]
+        authors = _authors(root)
+        if not authors:
+            authors_node = _first(root, tag="h2")
+            authors = _author_list(authors_node.text()) if authors_node else []
+        abstract = _abstract(root)
+        if not abstract:
+            detail = _first(root, class_name="proceedings-detail")
+            for node in _nodes(detail, class_name="col-md-12") if detail else []:
+                value = _clean(node.text())
+                if value and not re.match(r"^keywords\s*:", value, flags=re.IGNORECASE):
+                    abstract = value
+                    break
+        pdf = _pdf_url(root, url)
+        match = re.search(r"/proceedings/((?:19|20)\d{2})/(\d+)/?$", url)
+        paper_num = match.group(2) if match else ""
+        year = year or (int(match.group(1)) if match else None)
+        if not pdf and paper_num and year:
+            pdf = f"https://www.ijcai.org/proceedings/{year}/{int(paper_num):04d}.pdf"
+        resolved_source_id = source_id or (f"{year}-{paper_num}" if year and paper_num else "")
+        source_metadata: dict[str, Any] = {"refreshed_from_detail": True}
+        if year:
+            source_metadata["proceedings_year"] = year
+        if paper_num:
+            source_metadata["paper_number"] = paper_num
+        bibtex_url = _bibtex_url(root, url)
+        if bibtex_url:
+            source_metadata["bibtex_url"] = bibtex_url
+        elif paper_num and year:
+            source_metadata["bibtex_url"] = f"https://www.ijcai.org/proceedings/{year}/bibtex/{int(paper_num)}"
+        return _make_paper(
+            spec=spec,
+            adapter=self_adapter(spec, "ijcai"),
+            source_id=resolved_source_id,
+            title=title,
+            authors=authors,
+            abstract=abstract,
+            published_at=next(
+                (_iso_date(value) for name in ("citation_publication_date", "citation_date", "DC.Date.issued") for value in _meta(root, name) if _iso_date(value)),
+                None,
+            ),
+            landing_url=url,
+            pdf_url=pdf,
+            doi=_doi(root),
+            response=response,
+            source_metadata=source_metadata,
+        )
+
+    @staticmethod
     def parse_papers(html_text: str, *, spec: VenueSpec, year: int, base_url: str, detail_loader: Callable[[str], tuple[str, HttpResponse | None]] | None = None) -> list[ParsedRecord]:
         root = _tree(html_text)
         records: list[ParsedRecord] = []
         for node in _nodes(root, class_name="paper_wrapper"):
             title_node = _first(node, class_name="title")
-            details = _first(node, class_name="details")
+            authors_node = _first(node, class_name="authors")
             title = title_node.text() if title_node else ""
-            raw_authors = re.sub(r"\s+and\s+", ",", details.text() if details else "", flags=re.IGNORECASE)
-            authors = [_clean(item) for item in raw_authors.split(",") if _clean(item)]
+            authors = _author_list(authors_node.text()) if authors_node else []
             pdf = next((link for label, link in _hrefs(node) if link.casefold().endswith(".pdf")), "")
             landing = next((link for _label, link in _hrefs(node) if re.search(r"/proceedings/\d{4}/\d+/?$", link)), "")
             pdf_url = _absolute(pdf, base_url) if pdf else ""
@@ -1316,8 +1451,16 @@ class IJCAIAdapter(OfficialAdapter):
             if not abstract and detail_loader and landing_url:
                 try:
                     detail_html, response = detail_loader(landing_url)
-                    detail_root = _tree(detail_html)
-                    abstract = _abstract(detail_root)
+                    detail_record = IJCAIAdapter.parse_detail(
+                        detail_html,
+                        spec=spec,
+                        url=landing_url,
+                        source_id=f"{year}-{paper_num or 'unknown'}",
+                        year=year,
+                        response=response,
+                    )
+                    records.append(detail_record)
+                    continue
                 except Exception as exc:
                     records.append(ParsedRecord(incomplete=_incomplete(
                         spec,
@@ -1391,13 +1534,54 @@ class USENIXAdapter(OfficialAdapter):
         return sorted({_absolute(href.split("#", 1)[0], base_url) for _, href in _hrefs(_tree(html_text)) if prefix in urlparse(_absolute(href, base_url)).path})
 
     @staticmethod
-    def parse_paper(html_text: str, *, spec: VenueSpec, url: str, year: int, response: HttpResponse | None = None) -> ParsedRecord:
+    def _people_text(root: _Node) -> str:
+        node = _first(root, class_name="field-name-field-paper-people-text")
+        paragraph = _first(node, tag="p") if node else None
+        if not paragraph:
+            return ""
+        # The affiliation is marked up as ``<em>`` on USENIX pages. Remove
+        # that node before splitting the remaining author label.
+        values: list[str] = []
+        for child in paragraph.children:
+            if isinstance(child, str):
+                values.append(child)
+            elif child.tag != "em":
+                values.append(child.text())
+        return _clean("".join(values)).rstrip(" ,")
+
+    @staticmethod
+    def _abstract_text(root: _Node) -> str:
+        node = _first(root, class_name="field-name-field-paper-description")
+        if not node:
+            return ""
+        values: list[str] = []
+        for paragraph in _nodes(node, tag="p"):
+            value = _clean(paragraph.text())
+            if value and value not in values:
+                values.append(value)
+        return " ".join(values)
+
+    @staticmethod
+    def parse_paper(
+        html_text: str,
+        *,
+        spec: VenueSpec,
+        url: str,
+        year: int | None,
+        source_id: str | None = None,
+        refreshed: bool = False,
+        response: HttpResponse | None = None,
+    ) -> ParsedRecord:
         root = _tree(html_text)
         title = (_meta(root, "citation_title") or [_clean((_first(root, tag="h1") or _Node()).text())])[0]
         authors = _authors(root)
-        abstract = _abstract(root)
+        if not authors:
+            authors = _author_list(USENIXAdapter._people_text(root))
+        abstract = USENIXAdapter._abstract_text(root) or _abstract(root)
         pdf = _pdf_url(root, url)
-        source_metadata = {"conference_year": year}
+        source_metadata = {"conference_year": year} if year else {}
+        if refreshed:
+            source_metadata["refreshed_from_detail"] = True
         bibtex_url = _bibtex_url(root, url)
         bibtex_inline = _bibtex_inline(root)
         if bibtex_url:
@@ -1407,7 +1591,7 @@ class USENIXAdapter(OfficialAdapter):
         return _make_paper(
             spec=spec,
             adapter=self_adapter(spec, "usenix"),
-            source_id=f"{year}:{_last_path(url)}",
+            source_id=source_id or f"{year}:{_last_path(url)}",
             title=title,
             authors=authors,
             abstract=abstract,
@@ -1461,18 +1645,59 @@ class NDSSAdapter(OfficialAdapter):
         return sorted({_absolute(href.split("#", 1)[0], base_url) for _, href in _hrefs(_tree(html_text)) if "/ndss-paper/" in href})
 
     @staticmethod
-    def parse_paper(html_text: str, *, spec: VenueSpec, url: str, year: int, response: HttpResponse | None = None) -> ParsedRecord:
+    def _paper_data_paragraphs(root: _Node) -> list[str]:
+        node = _first(root, class_name="paper-data")
+        if not node:
+            return []
+        values: list[str] = []
+        for paragraph in _nodes(node, tag="p"):
+            value = _clean(paragraph.text())
+            if value and value not in values:
+                values.append(value)
+        return values
+
+    @staticmethod
+    def parse_paper(
+        html_text: str,
+        *,
+        spec: VenueSpec,
+        url: str,
+        year: int | None,
+        source_id: str | None = None,
+        refreshed: bool = False,
+        response: HttpResponse | None = None,
+    ) -> ParsedRecord:
         root = _tree(html_text)
         title = (_meta(root, "citation_title") or [_clean((_first(root, tag="h1") or _Node()).text())])[0]
         authors = _authors(root)
         if not authors:
-            node = _first(root, class_name="paper-data") or _first(root, class_name="entry-content")
-            paragraphs = [item.text() for item in _nodes(node) if item.tag == "p"] if node else []
+            paragraphs = NDSSAdapter._paper_data_paragraphs(root)
             if paragraphs:
-                authors = [_clean(item) for item in re.split(r"[,;]", paragraphs[0]) if _clean(item)]
-        abstract = _abstract(root)
+                authors = [
+                    re.sub(r"\s*\([^)]*\)\s*$", "", item).strip()
+                    for item in _split_top_level(paragraphs[0])
+                    if _clean(re.sub(r"\s*\([^)]*\)\s*$", "", item))
+                ]
+        paragraphs = NDSSAdapter._paper_data_paragraphs(root)
+        abstract = paragraphs[1] if len(paragraphs) > 1 else _abstract(root)
         pdf = _pdf_url(root, url)
-        return _make_paper(spec=spec, adapter=self_adapter(spec, "ndss"), source_id=f"{year}:{_last_path(url)}", title=title, authors=authors, abstract=abstract, published_at=None, landing_url=url, pdf_url=pdf, doi=_doi(root), response=response, source_metadata={"symposium_year": year})
+        source_metadata = {"symposium_year": year} if year else {}
+        if refreshed:
+            source_metadata["refreshed_from_detail"] = True
+        return _make_paper(
+            spec=spec,
+            adapter=self_adapter(spec, "ndss"),
+            source_id=source_id or f"{year}:{_last_path(url)}",
+            title=title,
+            authors=authors,
+            abstract=abstract,
+            published_at=None,
+            landing_url=url,
+            pdf_url=pdf,
+            doi=_doi(root),
+            response=response,
+            source_metadata=source_metadata,
+        )
 
     def discover(self, plan: SearchPlan, spec: VenueSpec) -> DiscoveryResult:
         years = _years_for_plan(plan)

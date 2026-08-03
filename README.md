@@ -143,6 +143,18 @@ never a fact authority for title, authors, abstract, venue, URLs, or BibTeX.
 
 若某个出口（当前本地 OpenReview API 返回 403）不可达，错误会保存在 `source_reports`，可用的 arXiv 候选仍会继续处理；这不是事实兜底，只有重新从权威源获取并通过身份校验的记录才能进入 `facts.json`。
 
+## Changelog
+
+### 2026-08-04
+
+- Formal-source records no longer fabricate `YYYY-01-01` from a proceedings
+  year. An unknown authoritative date remains unknown, while the baseline
+  source ID retains only the year needed to rebuild an official route.
+- PMLR/ICML full text accepts only the official `mlresearch` raw GitHub path
+  whose version and repeated paper key match the refreshed PMLR identifier.
+  NeurIPS supports its official no-DOI BibTeX export with an equally strict
+  host and path check.
+
 ## 站点
 
 - [首页](https://EnlZhao.github.io/LLMSecurityDigest)
