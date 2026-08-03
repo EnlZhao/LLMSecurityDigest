@@ -4,6 +4,7 @@ import html
 import json
 import os
 import re
+import unicodedata
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from typing import Any, Iterable
@@ -520,8 +521,11 @@ def _is_explicit_final_venue(venue_text: str, assigned_venue_id: str) -> bool:
     ``PREFIX YEAR Conference (Poster)``. Require the venue id, year, prefix,
     and final track to agree before using that compatibility path.
     """
-    venue = re.sub(r"\s+", " ", _text(venue_text)).strip().casefold()
-    assigned = re.sub(r"\s+", "", _text(assigned_venue_id)).strip().casefold()
+    # API serializers can use compatibility characters such as full-width
+    # parentheses. Normalize those before applying the deliberately narrow
+    # final-venue grammar; this is not a fuzzy acceptance match.
+    venue = re.sub(r"\s+", " ", unicodedata.normalize("NFKC", _text(venue_text))).strip().casefold()
+    assigned = re.sub(r"\s+", "", unicodedata.normalize("NFKC", _text(assigned_venue_id))).strip().casefold()
     match = re.fullmatch(r"(?P<prefix>[a-z0-9-]+)(?:\.[a-z0-9-]+)?/(?P<year>(?:19|20)\d{2})/conference", assigned)
     if not venue or not match:
         return False

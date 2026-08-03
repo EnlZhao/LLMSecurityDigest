@@ -10,6 +10,7 @@ from llm_security_digest.papers.official import _pdf_url, _tree
 from llm_security_digest.papers.sources import (
     ArxivSource,
     OpenReviewSource,
+    _is_explicit_final_venue,
     discovery_query_for_general_index,
     reconcile_arxiv_to_formal,
 )
@@ -137,6 +138,61 @@ def test_openreview_v2_acceptance_requires_an_explicit_decision_reply() -> None:
     assert papers[0].publication_status == "accepted"
     assert papers[0].venue == "International Conference on Learning Representations"
     assert {item["reason"] for item in incomplete} == {"pending_decision"}
+
+
+def test_openreview_rejected_and_withdrawn_submissions_never_become_facts() -> None:
+    response = HttpResponse(
+        url="https://api2.openreview.net/notes",
+        final_url="https://api2.openreview.net/notes",
+        status=200,
+        headers={},
+        body=b"{}",
+    )
+    rejected = {
+        "id": "rejected-submission",
+        "forum": "rejected-forum",
+        "content": {
+            "title": "Rejected Paper",
+            "authors": ["Alice Example"],
+            "abstract": "Rejected abstract.",
+            "venueid": "ICLR.cc/2025/Conference",
+            "venue": "ICLR 2025 Conference",
+        },
+    }
+    rejection = {
+        "id": "rejected-decision",
+        "forum": "rejected-forum",
+        "invitations": ["ICLR.cc/2025/Conference/-/Decision"],
+        "content": {"decision": "Reject"},
+    }
+    withdrawn = {
+        "id": "withdrawn-submission",
+        "forum": "withdrawn-forum",
+        "content": {
+            "title": "Withdrawn Paper",
+            "authors": ["Bob Example"],
+            "abstract": "Withdrawn abstract.",
+            "venueid": "ICLR.cc/2025/Conference",
+            "venue": "Withdrawn",
+        },
+    }
+
+    papers, incomplete = OpenReviewSource.parse_notes_with_incomplete(
+        [rejected, rejection, withdrawn],
+        venue_id="ICLR.cc/2025/Conference",
+        response=response,
+    )
+
+    assert papers == []
+    assert [item["reason"] for item in incomplete] == ["rejected_or_withdrawn", "rejected_or_withdrawn"]
+
+
+def test_openreview_legacy_final_venue_is_unicode_normalized_but_not_generic() -> None:
+    venue_id = "ICLR.cc/2025/Conference"
+
+    assert _is_explicit_final_venue("iclr 2025 conference (poster)", venue_id)
+    assert _is_explicit_final_venue("ICLR 2025 Conference（Poster）", venue_id)
+    assert not _is_explicit_final_venue("ICLR 2025 Conference", venue_id)
 
 
 def test_headless_fallback_cannot_expand_the_baseline_host_registry() -> None:
