@@ -134,6 +134,19 @@ def _absolute(value: str, base: str) -> str:
     return urljoin(base, value)
 
 
+def _official_link(value: str, base: str, allowed_hosts: Iterable[str]) -> str:
+    """Resolve an official-page link only when it stays on a registered host."""
+    absolute = _absolute(value.split("#", 1)[0], base)
+    parsed = urlparse(absolute)
+    hostname = parsed.hostname.casefold().rstrip(".") if parsed.hostname else ""
+    hosts = {str(item).casefold().rstrip(".") for item in allowed_hosts}
+    if parsed.scheme.casefold() != "https" or hostname not in hosts:
+        return ""
+    if parsed.username is not None or parsed.password is not None:
+        return ""
+    return absolute
+
+
 def _iso_date(value: str) -> str | None:
     text = _clean(value)
     formats = ("%Y-%m-%d", "%Y/%m/%d", "%B %d, %Y", "%b %d, %Y")
@@ -524,9 +537,10 @@ class ACLAnthologyAdapter(OfficialAdapter):
         # only numbered paper records are authoritative paper candidates.
         pattern = re.compile(rf"/{int(year)}\.{re.escape(volume_key)}\.[1-9]\d*/?$")
         urls = {
-            _absolute(href, "https://aclanthology.org")
+            absolute
             for _, href in _hrefs(root)
-            if pattern.search(urlparse(_absolute(href, "https://aclanthology.org")).path)
+            if (absolute := _official_link(href, "https://aclanthology.org", {"aclanthology.org"}))
+            and pattern.search(urlparse(absolute).path)
         }
         return sorted(urls)
 
@@ -615,17 +629,18 @@ class PMLRAdapter(OfficialAdapter):
             if "icml" not in lowered and "international conference on machine learning" not in lowered:
                 continue
             match = re.search(r"\b((?:19|20)\d{2})\b", text)
-            volume_match = re.search(r"(?:^|/)v(\d+)(?:/|$)", urlparse(href).path or href, flags=re.IGNORECASE)
+            absolute = _official_link(href, "https://proceedings.mlr.press", {"proceedings.mlr.press"})
+            volume_match = re.search(r"(?:^|/)v(\d+)(?:/|$)", urlparse(absolute).path, flags=re.IGNORECASE) if absolute else None
             if not match or not volume_match:
                 continue
-            values.append({"year": int(match.group(1)), "volume": f"v{volume_match.group(1)}", "url": _absolute(href, "https://proceedings.mlr.press")})
+            values.append({"year": int(match.group(1)), "volume": f"v{volume_match.group(1)}", "url": absolute})
         return sorted({(item["year"], item["volume"]): item for item in values}.values(), key=lambda item: (item["year"], item["volume"]))
 
     @staticmethod
     def paper_urls(html_text: str, *, volume: str) -> list[str]:
         root = _tree(html_text)
         pattern = re.compile(rf"/{re.escape(volume)}/[^/]+\.html(?:#.*)?$")
-        return sorted({_absolute(href.split("#", 1)[0], "https://proceedings.mlr.press") for _, href in _hrefs(root) if pattern.search(href)})
+        return sorted({absolute for _, href in _hrefs(root) if pattern.search(href) and (absolute := _official_link(href, "https://proceedings.mlr.press", {"proceedings.mlr.press"}))})
 
     @staticmethod
     def parse_paper(html_text: str, *, spec: VenueSpec, url: str, year: int, response: HttpResponse | None = None) -> ParsedRecord:
@@ -817,7 +832,7 @@ class NeurIPSAdapter(OfficialAdapter):
     def paper_urls(html_text: str, *, year: int) -> list[str]:
         root = _tree(html_text)
         prefix = f"/paper_files/paper/{int(year)}/"
-        return sorted({_absolute(href.split("#", 1)[0], "https://proceedings.neurips.cc") for _, href in _hrefs(root) if prefix in urlparse(_absolute(href, "https://proceedings.neurips.cc")).path and "-Abstract-Conference" in href})
+        return sorted({absolute for _, href in _hrefs(root) if (absolute := _official_link(href, "https://proceedings.neurips.cc", {"proceedings.neurips.cc"})) and prefix in urlparse(absolute).path and "-Abstract-Conference" in href})
 
     @staticmethod
     def parse_paper(html_text: str, *, spec: VenueSpec, url: str, year: int, response: HttpResponse | None = None) -> ParsedRecord:
@@ -1225,8 +1240,9 @@ class AAAIOJSAdapter(OfficialAdapter):
             title = _clean(title_node.text() if title_node else "")
             href = _clean(title_node.attrs.get("href") if title_node else "")
             year = cls.issue_year(title)
-            if year is not None and href:
-                values.append({"title": title, "year": year, "url": _absolute(href, base_url or cls.ARCHIVE_URL)})
+            absolute = _official_link(href, base_url or cls.ARCHIVE_URL, {"ojs.aaai.org"}) if href else ""
+            if year is not None and absolute:
+                values.append({"title": title, "year": year, "url": absolute})
         return list({item["url"]: item for item in values}.values())
 
     @classmethod
@@ -1247,7 +1263,9 @@ class AAAIOJSAdapter(OfficialAdapter):
             if label == "next" or "next" in classes:
                 href = _clean(node.attrs.get("href"))
                 if href:
-                    return _absolute(href, base_url)
+                    absolute = _official_link(href, base_url, {"ojs.aaai.org"})
+                    if absolute:
+                        return absolute
         return None
 
     @staticmethod
@@ -1288,12 +1306,15 @@ class AAAIOJSAdapter(OfficialAdapter):
             article_match = re.search(r"/article/view/(\d+)", href)
             if not article_match or not title:
                 continue
-            article_url = _absolute(href, AAAIOJSAdapter.ARCHIVE_URL)
+            article_url = _official_link(href, AAAIOJSAdapter.ARCHIVE_URL, {"ojs.aaai.org"})
+            if not article_url:
+                continue
             pdf = ""
             for label, link in _hrefs(node):
                 if "pdf" in label.casefold() or "pdf" in link.casefold():
-                    pdf = _absolute(link, article_url)
-                    break
+                    pdf = _official_link(link, article_url, {"ojs.aaai.org"})
+                    if pdf:
+                        break
             values.append({"article_id": article_match.group(1), "url": article_url, "title": title, "pdf_url": pdf, "authors": _authors(node), "year": issue["year"]})
         return values
 
@@ -1446,8 +1467,8 @@ class IJCAIAdapter(OfficialAdapter):
             authors = _author_list(authors_node.text()) if authors_node else []
             pdf = next((link for label, link in _hrefs(node) if link.casefold().endswith(".pdf")), "")
             landing = next((link for _label, link in _hrefs(node) if re.search(r"/proceedings/\d{4}/\d+/?$", link)), "")
-            pdf_url = _absolute(pdf, base_url) if pdf else ""
-            landing_url = _absolute(landing, base_url) if landing else ""
+            pdf_url = _official_link(pdf, base_url, {"www.ijcai.org"}) if pdf else ""
+            landing_url = _official_link(landing, base_url, {"www.ijcai.org"}) if landing else ""
             match = re.search(r"/(\d+)\.pdf$", pdf_url) or re.search(r"/proceedings/\d{4}/(\d+)/?$", landing_url)
             paper_num = match.group(1) if match else ""
             if paper_num and not landing_url:
@@ -1538,7 +1559,7 @@ class USENIXAdapter(OfficialAdapter):
     @staticmethod
     def presentation_urls(html_text: str, *, year: int, base_url: str) -> list[str]:
         prefix = f"/conference/usenixsecurity{int(year) % 100:02d}/presentation/"
-        return sorted({_absolute(href.split("#", 1)[0], base_url) for _, href in _hrefs(_tree(html_text)) if prefix in urlparse(_absolute(href, base_url)).path})
+        return sorted({absolute for _, href in _hrefs(_tree(html_text)) if (absolute := _official_link(href, base_url, {"www.usenix.org"})) and prefix in urlparse(absolute).path})
 
     @staticmethod
     def _people_text(root: _Node) -> str:
@@ -1649,7 +1670,7 @@ class NDSSAdapter(OfficialAdapter):
 
     @staticmethod
     def paper_urls(html_text: str, *, base_url: str) -> list[str]:
-        return sorted({_absolute(href.split("#", 1)[0], base_url) for _, href in _hrefs(_tree(html_text)) if "/ndss-paper/" in href})
+        return sorted({absolute for _, href in _hrefs(_tree(html_text)) if "/ndss-paper/" in href and (absolute := _official_link(href, base_url, {"www.ndss-symposium.org"}))})
 
     @staticmethod
     def _paper_data_paragraphs(root: _Node) -> list[str]:
