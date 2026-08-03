@@ -154,6 +154,9 @@ never a fact authority for title, authors, abstract, venue, URLs, or BibTeX.
 
 ### 2026-08-04
 
+- Core and broad keyword filtering now normalizes Unicode compatibility forms
+  before case-insensitive matching, so equivalent query spellings cannot
+  silently change a paper's track eligibility.
 - IJCAI proceedings discovery now enforces the per-venue candidate budget
   before fetching detail pages, so a large proceedings index cannot turn a
   bounded daily collection into unbounded detail requests.

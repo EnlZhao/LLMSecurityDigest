@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import unicodedata
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -59,8 +60,10 @@ def _error_message(exc: Exception, *, limit: int = 400) -> str:
 def _matches_keywords(paper: PaperFacts, keywords: list[str]) -> bool:
     if not keywords:
         return True
-    haystack = f"{paper.title}\n{paper.abstract}".casefold()
-    return any(keyword.casefold() in haystack for keyword in keywords)
+    # Preserve word boundaries for substring matching while making equivalent
+    # Unicode spellings and case differences behave the same.
+    haystack = unicodedata.normalize("NFKC", f"{paper.title}\n{paper.abstract}").casefold()
+    return any(unicodedata.normalize("NFKC", keyword).casefold() in haystack for keyword in keywords)
 
 
 def _matches_date_window(paper: PaperFacts, plan: SearchPlan) -> bool:

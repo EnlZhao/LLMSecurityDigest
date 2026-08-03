@@ -51,6 +51,16 @@ def _pmlr_paper() -> PaperFacts:
     )
 
 
+def test_keyword_matching_normalizes_unicode_without_changing_fact_fields() -> None:
+    paper = _paper(
+        paper_id="crossref:unicode", source="crossref", source_id="10.1234/unicode",
+        title="Ｆｕｌｌｗｉｄｔｈ Caf\u00e9", authors=["Alice Example"], doi="10.1234/unicode",
+    )
+
+    assert pipeline._matches_keywords(paper, ["fullwidth cafe\u0301"])
+    assert not pipeline._matches_keywords(paper, ["different topic"])
+
+
 def test_pmlr_raw_pdf_path_requires_matching_volume() -> None:
     paper = _pmlr_paper()
 
