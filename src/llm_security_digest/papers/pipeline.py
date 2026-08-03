@@ -391,7 +391,7 @@ def _bibtex_source_url(paper: PaperFacts) -> str | None:
         "ndss": {"www.ndss-symposium.org"},
         "aaai_ojs": {"ojs.aaai.org"},
         "cvpr": {"openaccess.thecvf.com"},
-        "eccv": {"openaccess.thecvf.com"},
+        "eccv": {"www.ecva.net"},
     }.get(source, set())
     if isinstance(value, str) and value.startswith("https://") and trusted_hosts:
         parsed = parse.urlsplit(value)
@@ -420,7 +420,7 @@ def _bibtex_hosts(paper: PaperFacts) -> frozenset[str] | None:
         "pmlr": frozenset({"proceedings.mlr.press"}),
         "ijcai": frozenset({"www.ijcai.org"}),
         "cvpr": frozenset({"openaccess.thecvf.com"}),
-        "eccv": frozenset({"openaccess.thecvf.com"}),
+        "eccv": frozenset({"www.ecva.net"}),
     }.get(str(paper.source or "").casefold())
 
 

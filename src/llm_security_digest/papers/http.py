@@ -4,6 +4,7 @@ import hashlib
 import json
 import ipaddress
 import time
+import unicodedata
 import zlib
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
@@ -15,19 +16,37 @@ _SECRET_QUERY_MARKERS = frozenset({
     "key", "api_key", "apikey", "access_token", "token", "secret", "password",
     "passwd", "authorization", "auth", "credential", "cookie", "session",
 })
+_SECRET_QUERY_COMPONENTS = frozenset(
+    marker for marker in _SECRET_QUERY_MARKERS if "_" not in marker
+)
+
+
+def _normalize_query_key(value: str) -> str:
+    """Normalize query-key spelling without collapsing unrelated words."""
+    text = unicodedata.normalize("NFKC", value)
+    separated: list[str] = []
+    for index, char in enumerate(text):
+        if index:
+            previous = text[index - 1]
+            next_char = text[index + 1] if index + 1 < len(text) else ""
+            camel_boundary = (
+                (previous.islower() or previous.isdigit()) and char.isupper()
+            ) or (
+                previous.isupper() and char.isupper() and next_char.islower()
+            )
+            if camel_boundary:
+                separated.append("_")
+        separated.append(char)
+    folded = "".join(separated).casefold()
+    normalized = "".join(char if char.isalnum() or char == "_" else "_" for char in folded)
+    return "_".join(part for part in normalized.split("_") if part)
 
 
 def _secret_query_key(value: str) -> bool:
-    lowered = value.casefold().replace("-", "_")
-    return (
-        lowered in _SECRET_QUERY_MARKERS
-        or lowered.endswith(("_api_key", "_access_token", "_token"))
-        or any(
-            lowered.startswith(marker + "_")
-            for marker in _SECRET_QUERY_MARKERS
-            if marker not in {"token", "auth"}
-        )
-        or lowered.startswith(("token_", "auth_"))
+    normalized = _normalize_query_key(value)
+    return normalized in _SECRET_QUERY_MARKERS or any(
+        component in _SECRET_QUERY_COMPONENTS
+        for component in normalized.split("_")
     )
 
 

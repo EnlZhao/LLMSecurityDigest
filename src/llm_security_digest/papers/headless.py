@@ -18,6 +18,7 @@ from typing import Any, Callable, Iterable
 from urllib.parse import parse_qsl, urljoin, urlsplit
 
 from .. import config
+from .http import _secret_query_key
 from .models import VENUE_SPECS
 
 
@@ -29,10 +30,6 @@ DEFAULT_TIMEOUT_MS = 20_000
 MAX_REDIRECTS = 5
 MAX_RAW_RESPONSE_BYTES = config.MAX_PDF_BYTES
 MAX_RAW_OUTPUT_BYTES = 36 * 1024 * 1024
-_SECRET_QUERY_MARKERS = (
-    "key", "api_key", "apikey", "access_token", "token", "secret", "password",
-    "passwd", "authorization", "auth", "credential", "cookie", "session",
-)
 _SENSITIVE_RESPONSE_HEADERS = frozenset({"set-cookie", "set-cookie2"})
 
 
@@ -94,12 +91,7 @@ def _contains_secret_query(value: str) -> bool:
     except ValueError:
         return True
     for key, _item in pairs:
-        lowered = key.casefold().replace("-", "_")
-        if lowered in _SECRET_QUERY_MARKERS or lowered.endswith(("_api_key", "_access_token", "_token")) or any(
-            lowered.startswith(marker + "_")
-            for marker in _SECRET_QUERY_MARKERS
-            if marker not in {"token", "auth"}
-        ) or lowered.startswith("token_") or lowered.startswith("auth_"):
+        if _secret_query_key(key):
             return True
     return False
 

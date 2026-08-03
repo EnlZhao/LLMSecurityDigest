@@ -16,7 +16,7 @@ MiniMax/Hermes 只负责搜索策略、关键词、过滤、排序、分类和�
 
 | 来源 | 用途 | 是否需要 Key |
 | --- | --- | --- |
-| 官方 proceedings adapters | USENIX、NDSS、ACL/EMNLP、PMLR/ICML、NeurIPS、CVF/CVPR/ECCV、AAAI、IJCAI | 否 |
+| 官方 proceedings adapters | USENIX、NDSS、ACL/EMNLP、PMLR/ICML、NeurIPS、CVF/CVPR、ECVA/ECCV、AAAI、IJCAI | 否 |
 | OpenReview API v2/v1-compatible | ICLR、NeurIPS、ICML 等投稿、venue 与 decision replies | 否 |
 | arXiv Atom API | 广泛发现、预印本元数据与正式记录 reconciliation | 否 |
 | Crossref REST + DOI content negotiation | IEEE/ACM 注册 venue 的 DOI 元数据与官方 BibTeX | 否，建议配置联系邮箱 |

@@ -41,10 +41,12 @@ container titles. The formal tier is routed to deterministic adapters in
 - USENIX Security and NDSS use their proceedings pages and citation metadata.
 - ACL/EMNLP use ACL Anthology.
 - ICML uses PMLR; NeurIPS uses the NeurIPS proceedings pages.
-- CVPR/ECCV use CVF Open Access pages at `openaccess.thecvf.com`; the adapter
-  collects detail links from `{CVPR,ECCV}<year>?day=all` and accepts only
-  citation metadata, official landing/PDF URLs, DOI metadata, and official
-  BibTeX links or inline BibTeX.
+- CVPR uses CVF Open Access pages at `openaccess.thecvf.com`; it collects
+  detail links from `CVPR<year>?day=all` and accepts only official detail/PDF
+  URLs, citation metadata, DOI metadata, and official BibTeX links or inline
+  BibTeX. ECCV uses its distinct ECVA archive at `www.ecva.net/papers.php`;
+  the parser accepts only its year-bound detail and PDF URL grammars. It uses
+  a page DOI for BibTeX content negotiation and otherwise remains incomplete.
 - AAAI uses the OJS archive; IJCAI uses its proceedings pages.
 - IEEE/ACM venue groups use registered Crossref queries with ISSN/container
   filtering, followed by DOI content negotiation for BibTeX. IEEE venues also
@@ -125,8 +127,8 @@ installed as an unreviewed fact provider. The useful patterns are:
   code, never by an LLM.
 - `paper-search-mcp` is a discovery/reference pattern only. It may inform
   where a deterministic adapter should look, but it cannot provide or correct
-  paper facts. CVPR/ECCV facts come only from CVF Open Access responses that
-  pass the baseline parser and validation.
+  paper facts. CVPR facts come only from CVF Open Access and ECCV facts only
+  from ECVA responses that pass the baseline parser and validation.
 - [`sophia-jihye/IEEE_Xplore_API_Python`](https://github.com/sophia-jihye/IEEE_Xplore_API_Python)
   is an API usage example, not an authority by itself. IEEE Xplore requires
   `IEEE_XPLORE_API_KEY`; the adapter is optional and emits an explicit auth

@@ -28,7 +28,7 @@ _OFFICIAL_PDF_HOSTS = {
     "usenix-security": frozenset({"www.usenix.org"}),
     "ndss": frozenset({"www.ndss-symposium.org"}),
     "cvpr": frozenset({"openaccess.thecvf.com"}),
-    "eccv": frozenset({"openaccess.thecvf.com"}),
+    "eccv": frozenset({"www.ecva.net"}),
 }
 
 
@@ -452,6 +452,10 @@ def _last_path(value: str) -> str:
     return path.rsplit("/", 1)[-1] or "unknown"
 
 
+def _is_ecva_spec(spec: VenueSpec) -> bool:
+    return spec.key.casefold() == "eccv" or str(spec.adapter or "").casefold() == "ecva"
+
+
 class ACLAnthologyAdapter(OfficialAdapter):
     adapter = "acl_anthology"
     VOLUMES = {
@@ -587,8 +591,9 @@ class PMLRAdapter(OfficialAdapter):
         inline_bibtex = _bibtex_inline(root)
         if inline_bibtex:
             source_metadata["bibtex_inline"] = inline_bibtex
+        paper_key = re.sub(r"\.html$", "", _last_path(url), flags=re.IGNORECASE)
         return _make_paper(
-            spec=spec, adapter=self_adapter(spec, "pmlr"), source_id=f"{_last_path(url)}:{volume}",
+            spec=spec, adapter=self_adapter(spec, "pmlr"), source_id=f"{paper_key}:{volume}",
             title=title, authors=authors, abstract=abstract, published_at=_iso_date("", year),
             landing_url=url, pdf_url=pdf, doi=_doi(root), response=response,
             source_metadata=source_metadata,
@@ -651,6 +656,15 @@ def parse_official_detail(
     response: HttpResponse | None = None,
 ) -> ParsedRecord:
     """Refresh one already-discovered official record from its detail page."""
+    if _is_ecva_spec(spec):
+        return ECVAAdapter.parse_paper(
+            html_text,
+            spec=spec,
+            url=url,
+            source_id=source_id,
+            year=fallback_year,
+            response=response,
+        )
     root = _tree(html_text)
     title = (_meta(root, "citation_title") or [_clean((_first(root, tag="h1") or _Node()).text())])[0]
     authors = _authors(root)
@@ -784,6 +798,222 @@ class NeurIPSAdapter(OfficialAdapter):
         return DiscoveryResult(papers, incomplete, [self._report(spec, years=years, fetched=fetched, parsed=len(papers), incomplete=incomplete, errors=errors, urls=urls, truncated=len(papers) >= plan.max_results_per_venue)])
 
 
+class ECVAAdapter(OfficialAdapter):
+    """Deterministic adapter for ECCV papers published by ECVA."""
+
+    adapter = "ecva"
+    BASE_URL = "https://www.ecva.net"
+    INDEX_URL = f"{BASE_URL}/papers.php"
+    _DETAIL_RE = re.compile(
+        r"^/papers/eccv_(?P<year>(?:19|20)\d{2})/papers_ECCV/html/"
+        r"(?P<stem>[A-Za-z0-9][A-Za-z0-9._-]*_ECCV_(?P<stem_year>(?:19|20)\d{2})_paper)\.php$",
+        re.IGNORECASE,
+    )
+    _PDF_RE = re.compile(
+        r"^/papers/eccv_(?P<year>(?:19|20)\d{2})/papers_ECCV/papers/"
+        r"[A-Za-z0-9][A-Za-z0-9._-]*\.pdf$",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def index_url(cls, spec: VenueSpec | None = None, year: int | None = None) -> str:
+        return cls.INDEX_URL
+
+    @classmethod
+    def _url_parts(cls, url: str) -> tuple[int, str] | None:
+        parsed = urlparse(url)
+        if (
+            parsed.scheme.casefold() != "https"
+            or parsed.netloc.casefold() != "www.ecva.net"
+            or parsed.query
+            or parsed.fragment
+        ):
+            return None
+        match = cls._DETAIL_RE.fullmatch(parsed.path)
+        if not match or match.group("year") != match.group("stem_year"):
+            return None
+        return int(match.group("year")), match.group("stem")
+
+    @classmethod
+    def source_id_from_url(cls, url: str, *, spec: VenueSpec | None = None, year: int | None = None) -> str:
+        parts = cls._url_parts(url)
+        if parts is None or (year is not None and parts[0] != int(year)):
+            raise ValueError("invalid ECVA detail URL")
+        return parts[1]
+
+    @classmethod
+    def paper_urls(cls, html_text: str, *, spec: VenueSpec | None = None, year: int) -> list[str]:
+        if spec is not None and not _is_ecva_spec(spec):
+            return []
+        urls: set[str] = set()
+        for _, href in _hrefs(_tree(html_text)):
+            absolute = _absolute(href.split("#", 1)[0], cls.BASE_URL)
+            parts = cls._url_parts(absolute)
+            if parts and parts[0] == int(year):
+                urls.add(absolute)
+        return sorted(urls)
+
+    @classmethod
+    def _pdf_url(cls, root: _Node, base: str, *, year: int) -> str:
+        value = _pdf_url(root, base)
+        parsed = urlparse(value)
+        if (
+            parsed.scheme.casefold() != "https"
+            or parsed.netloc.casefold() != "www.ecva.net"
+            or parsed.query
+            or parsed.fragment
+        ):
+            return ""
+        match = cls._PDF_RE.fullmatch(parsed.path)
+        if not match or int(match.group("year")) != int(year):
+            return ""
+        return value
+
+    @staticmethod
+    def _authors(root: _Node) -> list[str]:
+        node = _first(root, node_id="authors")
+        if node:
+            raw = node.text().split(";", 1)[0]
+            raw = re.sub(r"\s*\*+\s*", "", raw)
+            values = [_clean(item) for item in re.split(r"[,;]", raw) if _clean(item)]
+            if values:
+                return values
+        return _authors(root)
+
+    @staticmethod
+    def _doi(root: _Node) -> str | None:
+        value = _doi(root)
+        if value:
+            return value
+        allowed_hosts = frozenset({"link.springer.com", "doi.org", "dx.doi.org"})
+        for _, href in _hrefs(root):
+            parsed = urlparse(href)
+            host = parsed.hostname.casefold().rstrip(".") if parsed.hostname else ""
+            if parsed.scheme.casefold() != "https" or host not in allowed_hosts:
+                continue
+            match = re.search(r"(10\.\d{4,9}/[^?#\s]+)", parsed.path)
+            if match:
+                value = normalize_doi(match.group(1))
+                if value.startswith("10."):
+                    return value
+        return None
+
+    @staticmethod
+    def _bibtex_inline(root: _Node) -> str:
+        for node in _nodes(root, class_name="bibref"):
+            value = node.text().strip()
+            if value.startswith("@"):
+                return value
+        return ""
+
+    @classmethod
+    def parse_paper(
+        cls,
+        html_text: str,
+        *,
+        spec: VenueSpec,
+        url: str,
+        source_id: str | None = None,
+        year: int | None = None,
+        response: HttpResponse | None = None,
+    ) -> ParsedRecord:
+        parts = cls._url_parts(url)
+        expected_source_id = source_id
+        source_id = parts[1] if parts else _last_path(url).removesuffix(".php")
+        if parts is None or (year is not None and parts[0] != int(year)):
+            return ParsedRecord(incomplete=_incomplete(
+                spec,
+                adapter=cls.adapter,
+                source_id=source_id,
+                landing_url=url,
+                reason="official_detail_url_invalid",
+                partial={"url": url},
+            ))
+        actual_year = parts[0]
+        if expected_source_id is not None and expected_source_id != parts[1]:
+            return ParsedRecord(incomplete=_incomplete(
+                spec,
+                adapter=cls.adapter,
+                source_id=expected_source_id,
+                landing_url=url,
+                reason="official_identity_mismatch",
+                partial={"canonical_source_id": parts[1]},
+            ))
+        root = _tree(html_text)
+        title_node = _first(root, node_id="papertitle")
+        title = _clean(title_node.text()) if title_node else ""
+        authors = cls._authors(root)
+        abstract = _abstract(root)
+        if len(abstract) >= 2 and abstract[0] == abstract[-1] and abstract[0] in {"\"", "'"}:
+            abstract = abstract[1:-1].strip()
+        pdf = cls._pdf_url(root, url, year=actual_year)
+        if not pdf:
+            return ParsedRecord(incomplete=_incomplete(
+                spec,
+                adapter=cls.adapter,
+                source_id=source_id,
+                landing_url=url,
+                reason="required_official_field_missing",
+                missing=("pdf_url",),
+                partial={"title": title, "authors": authors, "abstract": _clean(abstract)},
+            ))
+        source_metadata: dict[str, Any] = {
+            "proceedings_year": actual_year,
+            "proceedings": f"ECCV{actual_year}",
+        }
+        bibtex_inline = cls._bibtex_inline(root)
+        if bibtex_inline:
+            source_metadata["bibtex_inline"] = bibtex_inline
+        return _make_paper(
+            spec=spec,
+            adapter=self_adapter(spec, "ecva"),
+            source_id=source_id,
+            title=title,
+            authors=authors,
+            abstract=abstract,
+            published_at=_iso_date("", actual_year),
+            landing_url=url,
+            pdf_url=pdf,
+            doi=cls._doi(root),
+            response=response,
+            source_metadata=source_metadata,
+        )
+
+    def discover(self, plan: SearchPlan, spec: VenueSpec) -> DiscoveryResult:
+        years = _years_for_plan(plan)
+        papers: list[PaperFacts] = []
+        incomplete: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+        index_url = self.index_url(spec)
+        urls = [index_url]
+        fetched = 0
+        try:
+            response = self._get(index_url)
+            fetched += 1
+            index_html = response.text()
+        except Exception as exc:
+            errors.append(self._error(index_url, exc))
+            index_html = ""
+        for year in years:
+            for paper_url in self.paper_urls(index_html, spec=spec, year=year):
+                if len(papers) >= plan.max_results_per_venue:
+                    break
+                urls.append(paper_url)
+                try:
+                    response = self._get(paper_url)
+                    fetched += 1
+                    parsed = self.parse_paper(response.text(), spec=spec, url=paper_url, year=year, response=response)
+                    if parsed.paper:
+                        papers.append(parsed.paper)
+                    elif parsed.incomplete:
+                        incomplete.append(parsed.incomplete)
+                except Exception as exc:
+                    incomplete.append(_incomplete(spec, adapter=self.adapter, source_id=_last_path(paper_url), landing_url=paper_url, reason="official_detail_fetch_or_parse_failed", partial={"error_type": type(exc).__name__}))
+            if len(papers) >= plan.max_results_per_venue:
+                break
+        return DiscoveryResult(papers, incomplete, [self._report(spec, years=years, fetched=fetched, parsed=len(papers), incomplete=incomplete, errors=errors, urls=urls, truncated=len(papers) >= plan.max_results_per_venue)])
+
+
 class CVFAdapter(OfficialAdapter):
     adapter = "cvf"
 
@@ -793,10 +1023,14 @@ class CVFAdapter(OfficialAdapter):
 
     @classmethod
     def index_url(cls, spec: VenueSpec, year: int) -> str:
+        if _is_ecva_spec(spec):
+            return ECVAAdapter.index_url(spec, year)
         return f"https://openaccess.thecvf.com/{cls.proceedings_code(spec, year)}?day=all"
 
     @classmethod
     def source_id_from_url(cls, url: str, *, spec: VenueSpec, year: int) -> str:
+        if _is_ecva_spec(spec):
+            return ECVAAdapter.source_id_from_url(url, spec=spec, year=year)
         code = cls.proceedings_code(spec, year)
         path = urlparse(url).path
         match = re.search(rf"/content/{re.escape(code)}/html/([^/]+)\.html$", path, flags=re.IGNORECASE)
@@ -804,6 +1038,8 @@ class CVFAdapter(OfficialAdapter):
 
     @classmethod
     def paper_urls(cls, html_text: str, *, spec: VenueSpec, year: int) -> list[str]:
+        if _is_ecva_spec(spec):
+            return ECVAAdapter.paper_urls(html_text, spec=spec, year=year)
         code = cls.proceedings_code(spec, year)
         pattern = re.compile(rf"/content/{re.escape(code)}/html/[^/]+\.html$", re.IGNORECASE)
         base_url = "https://openaccess.thecvf.com"
@@ -828,6 +1064,8 @@ class CVFAdapter(OfficialAdapter):
         year: int,
         response: HttpResponse | None = None,
     ) -> ParsedRecord:
+        if _is_ecva_spec(spec):
+            return ECVAAdapter.parse_paper(html_text, spec=spec, url=url, year=year, response=response)
         root = _tree(html_text)
         title = (_meta(root, "citation_title") or [_clean((_first(root, tag="h1") or _Node()).text())])[0]
         authors = _authors(root)
@@ -870,6 +1108,8 @@ class CVFAdapter(OfficialAdapter):
         )
 
     def discover(self, plan: SearchPlan, spec: VenueSpec) -> DiscoveryResult:
+        if _is_ecva_spec(spec):
+            return ECVAAdapter(self.client).discover(plan, spec)
         years = _years_for_plan(plan)
         papers: list[PaperFacts] = []
         incomplete: list[dict[str, Any]] = []
@@ -1292,6 +1532,7 @@ ADAPTERS: dict[str, type[OfficialAdapter]] = {
     "pmlr": PMLRAdapter,
     "neurips": NeurIPSAdapter,
     "cvf": CVFAdapter,
+    "ecva": ECVAAdapter,
     "aaai_ojs": AAAIOJSAdapter,
     "ijcai": IJCAIAdapter,
     "usenix": USENIXAdapter,

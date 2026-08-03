@@ -78,7 +78,7 @@ _SOURCE_HOSTS = {
     "usenix": frozenset({"www.usenix.org"}),
     "ndss": frozenset({"www.ndss-symposium.org"}),
     "cvpr": frozenset({"openaccess.thecvf.com"}),
-    "eccv": frozenset({"openaccess.thecvf.com"}),
+    "eccv": frozenset({"www.ecva.net"}),
 }
 _DOI_RE = re.compile(r"^10\.\d{4,9}/[-._;()/:A-Z0-9]+$", re.IGNORECASE)
 
@@ -215,13 +215,21 @@ def official_route_for_paper(paper: PaperFacts) -> tuple[str, str, frozenset[str
         if year is None:
             raise ValueError("NDSS source id requires a bounded symposium year")
         url = f"https://www.ndss-symposium.org/ndss{year}/ndss-paper/{source_id}/"
-    elif source in {"cvpr", "eccv"}:
+    elif source == "cvpr":
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,240}", source_id):
             raise ValueError("invalid CVF source id")
         year = _paper_year_hint(paper)
         if year is None:
             raise ValueError("CVF source id requires a bounded proceedings year")
-        url = f"https://openaccess.thecvf.com/content/{source.upper()}{year}/html/{source_id}.html"
+        url = f"https://openaccess.thecvf.com/content/CVPR{year}/html/{source_id}.html"
+    elif source == "eccv":
+        match = re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*_ECCV_((?:19|20)\d{2})_paper", source_id)
+        if not match:
+            raise ValueError("invalid ECVA source id")
+        year = _paper_year_hint(paper)
+        if year is None or int(match.group(1)) != year:
+            raise ValueError("ECVA source id requires a matching proceedings year")
+        url = f"https://www.ecva.net/papers/eccv_{year}/papers_ECCV/html/{source_id}.php"
     else:  # pragma: no cover - source map is exhaustive by construction.
         raise ValueError(f"unsupported official source: {paper.source!r}")
     return spec_key, url, hosts
@@ -1393,7 +1401,15 @@ class CrossrefSource:
                     pdf_url = candidate_url
                     break
             published_parts = ((item.get("published") or {}).get("date-parts") or [[]])[0]
-            published_at = "-".join(str(part).zfill(2) for part in published_parts) or None
+            published_at = None
+            if published_parts:
+                try:
+                    year = int(published_parts[0])
+                    month = int(published_parts[1]) if len(published_parts) > 1 else 1
+                    day = int(published_parts[2]) if len(published_parts) > 2 else 1
+                    published_at = datetime(year, month, day, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
+                except (TypeError, ValueError, OverflowError):
+                    published_at = None
             landing_url = f"https://doi.org/{doi}"
             missing = [
                 field for field, value in (
