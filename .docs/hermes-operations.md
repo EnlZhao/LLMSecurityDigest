@@ -323,14 +323,17 @@ materialization. The manual workflow_dispatch path remains a one-title smoke
 test.
 
 The scheduled GitHub collection job runs on a clean headless Linux runner. It
-installs the package, runs the formal adapters plus OpenReview and arXiv, and
-uploads only the bounded candidate artifact. `IEEE_XPLORE_API_KEY`, when
-present, enables the optional IEEE adapter; it is not required for the
-no-key sources. The Scholar `workflow_run` job downloads that artifact and
-can query at most five records through `SERPAPI_API_KEY`; it uploads a new
-enrichment artifact and never executes an evolution candidate or writes
-`facts.json`. A persistent Hermes host may consume the artifact after checking
-the source reports and then run the baseline materializer locally.
+installs the package plus Playwright Chromium, enables the bounded
+raw-response fallback, runs the formal adapters plus OpenReview and arXiv, and
+uploads only the bounded candidate artifact. Direct HTTPS remains the first
+attempt. Browser bytes are still re-parsed and validated by the baseline
+adapter; the browser cannot create facts. `IEEE_XPLORE_API_KEY`, when present,
+enables the optional IEEE adapter; it is not required for the no-key sources.
+The Scholar `workflow_run` job downloads that artifact and can query at most
+five records through `SERPAPI_API_KEY`; it uploads a new enrichment artifact
+and never executes an evolution candidate or writes `facts.json`. A persistent
+Hermes host may consume the artifact after checking the source reports and then
+run the baseline materializer locally.
 
 ### Optional headless browser evidence
 

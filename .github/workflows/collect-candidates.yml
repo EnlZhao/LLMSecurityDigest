@@ -25,6 +25,11 @@ jobs:
       - name: Install collector
         run: python -m pip install .
 
+      - name: Install bounded browser fallback
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+
       - name: Collect formal venue, OpenReview, and arXiv candidates
         env:
           # Optional: anonymous OpenReview access remains the default. If
@@ -33,6 +38,10 @@ jobs:
           OPENREVIEW_USERNAME: ${{ secrets.OPENREVIEW_USERNAME }}
           OPENREVIEW_PASSWORD: ${{ secrets.OPENREVIEW_PASSWORD }}
           IEEE_XPLORE_API_KEY: ${{ secrets.IEEE_XPLORE_API_KEY }}
+          # Direct HTTPS remains primary. The browser can return only bounded
+          # raw bytes for registered hosts; deterministic adapters validate
+          # those bytes before any candidate can later be materialized.
+          LLMSD_HEADLESS_FALLBACK: "1"
         run: |
           mkdir -p "$RUNNER_TEMP/llmsd"
           python scripts/llm_security/run_daily.py init-plan \
