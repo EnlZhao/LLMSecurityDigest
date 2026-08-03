@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+.pytest_cache
 .venv/
 cache/
 logs/
@@ -13,3 +14,4 @@ tests/
 
 cron_prompt.md
 .env
+AGENTS.md

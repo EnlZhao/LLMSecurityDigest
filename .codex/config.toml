@@ -1,0 +1,14 @@
+# Project defaults for the workflow documented in ../AGENTS.md.
+# Provider credentials and provider URLs remain in user-level configuration.
+
+model = "gpt-5.6-sol"
+model_reasoning_effort = "medium"
+plan_mode_reasoning_effort = "medium"
+
+# Used when the runtime creates an implementation subagent without an explicit
+# per-call override.
+default_subagent_model = "gpt-5.6-luna"
+default_subagent_reasoning_effort = "max"
+
+# The current model catalog labels this model as codex-auto-review.
+review_model = "gpt-5.6-luna"
