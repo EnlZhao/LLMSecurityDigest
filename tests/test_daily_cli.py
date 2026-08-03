@@ -53,6 +53,42 @@ def test_doctor_does_not_require_optional_serpapi_key(monkeypatch, tmp_path, cap
     }
 
 
+def test_doctor_keeps_v2_challenge_primary_when_recovery_fails(monkeypatch, tmp_path, capsys) -> None:
+    daily = _daily_module()
+
+    class Client:
+        def get(self, url, **_kwargs):
+            return HttpResponse(url=url, final_url=url, status=200, headers={}, body=b"{}")
+
+    class ChallengeError(Exception):
+        code = 403
+
+    class OpenReview:
+        def __init__(self, *, http_client):
+            assert isinstance(http_client, Client)
+            self.errors = [
+                {"endpoint": "v2", "stage": "challenge", "error_type": "ChallengeError", "http_status": 403},
+                {"endpoint": "v2_http_recovery", "stage": "auth", "error_type": "HeadlessDiscoveryError", "http_status": None},
+            ]
+
+        def probe(self, _venue_id):
+            raise ChallengeError("Challenge verification required")
+
+    monkeypatch.setattr(daily, "default_client", Client)
+    monkeypatch.setattr(daily, "OpenReviewSource", OpenReview)
+
+    assert daily.command_doctor(argparse.Namespace(data_dir=str(tmp_path))) == 5
+    payload = json.loads(capsys.readouterr().out)
+    openreview = next(item for item in payload["checks"] if item["name"] == "openreview")
+    assert openreview["stage"] == "challenge"
+    assert openreview["http_status"] == 403
+    assert openreview["recovery_error"] == {
+        "stage": "auth",
+        "error_type": "HeadlessDiscoveryError",
+        "http_status": None,
+    }
+
+
 def test_baseline_cli_workflow_is_bounded_and_authoritative(monkeypatch, tmp_path, capsys) -> None:
     daily = _daily_module()
     data_dir = tmp_path / "llmsd-data"

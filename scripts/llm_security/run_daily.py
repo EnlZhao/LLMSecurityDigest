@@ -340,15 +340,28 @@ def command_doctor(args: argparse.Namespace) -> int:
     try:
         checks.append({"name": "openreview", **openreview_source.probe("ICLR.cc/2025/Conference")})
     except Exception as exc:
-        failure = openreview_source.errors[-1] if openreview_source.errors else {}
-        checks.append({
+        errors = openreview_source.errors
+        # The recovery attempt follows a v2 challenge. Its local transport
+        # error must remain visible without replacing the original diagnosis.
+        failure = next(
+            (item for item in errors if item.get("endpoint") == "v2" and item.get("stage") == "challenge"),
+            errors[-1] if errors else {},
+        )
+        check = {
             "name": "openreview",
             "status": "error",
             "stage": failure.get("stage", openreview_failure_stage(exc, "venue_query")),
             "error_type": type(exc).__name__,
             "http_status": failure.get("http_status", getattr(exc, "status_code", getattr(exc, "code", None))),
             "message": openreview_error_message(exc),
-        })
+        }
+        recovery = next((item for item in errors if item.get("endpoint") == "v2_http_recovery"), None)
+        if recovery:
+            check["recovery_error"] = {
+                key: recovery.get(key)
+                for key in ("stage", "error_type", "http_status")
+            }
+        checks.append(check)
     # Scholar enrichment is intentionally optional. Its absence must be
     # visible to the operator without making the no-key formal collector's
     # health check fail.
