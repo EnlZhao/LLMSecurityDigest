@@ -1,9 +1,9 @@
 """Bounded headless-browser discovery for registered paper sources.
 
 This module is deliberately not a paper adapter.  Browser output is evidence
-for candidate ranking only; authoritative facts still come from the regular
-Python source adapters and materializer.  No browser page is allowed to write
-``PaperFacts`` or ``facts.json``.
+for candidate ranking or a raw response transport only; authoritative facts
+still come from the regular Python source adapters and materializer.  No
+browser page is allowed to write ``PaperFacts`` or ``facts.json``.
 """
 from __future__ import annotations
 
@@ -374,10 +374,12 @@ class HeadlessDiscovery:
             digest = hashlib.sha256(body).hexdigest()
             provenance = {
                 "source_url": safe_url,
+                "requested_url": safe_url,
                 "final_url": final_url,
                 "redirect_chain": list(redirects),
                 "http_status": status,
                 "response_sha256": digest,
+                "sha256": digest,
                 "transport": "headless",
                 "fetched_at": fetched_at,
                 "content_type": response_headers.get("content-type"),
