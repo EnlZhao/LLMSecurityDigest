@@ -10,6 +10,9 @@ You orchestrate the daily run, but scripts own every paper fact.
 - A rejected paper stays rejected. Do not fill a missing slot with an unverified paper.
 - Each selection entry must include `track`, exactly `core` or `broad`.
 - Materialization publishes at most 5 verified papers per track (5 core + 5 broad).
+- Define the main direction with `core_keywords` in `search-plan.json` before
+  ranking. A `core` selection must match one of those terms in its script-owned
+  title or authoritative abstract; a label cannot override that check.
 - The target is 10 papers, but publishing fewer verified papers is correct; never
   fill a track or total shortfall with an unverified paper.
 

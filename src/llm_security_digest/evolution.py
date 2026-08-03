@@ -81,7 +81,7 @@ ALLOWED_OVERLAY_ROOTS = frozenset({
     "search_plan", "ranking", "source_policy", "source_requests", "reconciliation", "prompt", "reading_skill",
 })
 ALLOWED_SEARCH_PLAN_KEYS = frozenset({
-    "queries_add", "filter_keywords_add", "venue_groups_add", "sources",
+    "queries_add", "filter_keywords_add", "core_keywords_add", "venue_groups_add", "sources",
     "openreview_venues", "crossref_venues", "max_results_per_query",
     "max_results_per_venue", "scholar_enrich_limit", "target", "date_from", "date_to",
 })
@@ -494,7 +494,7 @@ def _validate_overlay_shape(overlay: dict[str, Any]) -> None:
             unknown = set(value) - ALLOWED_SEARCH_PLAN_KEYS
             if unknown:
                 raise EvolutionValidationError(f"search_plan overlay fields are not allowed: {sorted(unknown)}")
-            for key in ("queries_add", "filter_keywords_add", "venue_groups_add", "sources"):
+            for key in ("queries_add", "filter_keywords_add", "core_keywords_add", "venue_groups_add", "sources"):
                 if key in value:
                     _validate_text_array(value[key], f"search_plan.{key}", max_items=30, max_length=500)
             if "openreview_venues" in value:
@@ -801,7 +801,12 @@ def apply_overlay(plan: SearchPlan | dict[str, Any], overlay: dict[str, Any] | N
     raw = asdict(plan) if isinstance(plan, SearchPlan) else copy.deepcopy(plan)
     validated = validate_overlay({"overlay": overlay or {}})["overlay"]
     search = validated.get("search_plan", {})
-    for key, target in (("queries_add", "queries"), ("filter_keywords_add", "filter_keywords"), ("venue_groups_add", "venue_groups")):
+    for key, target in (
+        ("queries_add", "queries"),
+        ("filter_keywords_add", "filter_keywords"),
+        ("core_keywords_add", "core_keywords"),
+        ("venue_groups_add", "venue_groups"),
+    ):
         values = search.get(key)
         if values:
             existing = list(raw.get(target) or [])

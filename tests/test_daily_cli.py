@@ -89,7 +89,7 @@ def test_baseline_cli_workflow_is_bounded_and_authoritative(monkeypatch, tmp_pat
             paper_id=f"doi:{doi}",
             source="crossref",
             source_id=doi,
-            title=f"Security Fixture Paper {index}",
+            title=("Prompt Injection Security Fixture Paper" if index < 5 else "Security Fixture Paper") + f" {index}",
             authors=["Alice Example"],
             abstract=f"LLM_FACT_INJECTION_{index} security candidate abstract",
             publication_status="published",

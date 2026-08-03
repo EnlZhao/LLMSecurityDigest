@@ -699,6 +699,16 @@ def materialize(
     raw_candidates = candidates_payload.get("candidates")
     if not isinstance(raw_candidates, list):
         raise ValueError("candidates payload must contain a candidates array")
+    raw_plan = candidates_payload.get("plan")
+    if raw_plan is not None and not isinstance(raw_plan, dict):
+        raise ValueError("candidates payload plan must be an object")
+    core_keywords = [] if raw_plan is None else raw_plan.get("core_keywords", [])
+    if (
+        not isinstance(core_keywords, list)
+        or len(core_keywords) > 100
+        or any(not isinstance(value, str) or not value.strip() or len(value) > 100 for value in core_keywords)
+    ):
+        raise ValueError("candidates payload core_keywords is invalid")
     candidates: dict[str, PaperFacts] = {}
     for index, item in enumerate(raw_candidates):
         if not isinstance(item, dict) or not str(item.get("paper_id", "")).strip():
@@ -739,6 +749,12 @@ def materialize(
                 "paper_id": paper.paper_id,
                 "reason": "unresolved_evidence",
                 "evidence": paper.unresolved_evidence,
+            })
+            continue
+        if selection.track == "core" and core_keywords and not _matches_keywords(paper, core_keywords):
+            rejected.append({
+                "paper_id": paper.paper_id,
+                "reason": "core_keyword_mismatch",
             })
             continue
         if track_counts[selection.track] >= 5:

@@ -73,7 +73,9 @@ ISSN/container 查询，DOI BibTeX 通过
 Hermes 的 `selection.json` 每项必须包含非事实字段
 `paper_id`、`score`、`category`、`reason` 和 `track`；
 `track` 只能是 `core` 或 `broad`。每天每轨最多发布 5 篇，目标最多
-10 篇；验证失败或配额超出时保留可见拒绝记录，允许少于 10 篇，不自动凑数。
+10 篇。`search-plan.json` 的 `core_keywords` 定义主方向；标为 `core`
+的候选必须由脚本在标题或权威摘要中命中其中至少一个关键词。验证失败、
+关键词不匹配或配额超出时保留可见拒绝记录，允许少于 10 篇，不自动凑数。
 
 ```bash
 python scripts/llm_security/run_daily.py init-plan --out RUN/search-plan.json
@@ -181,6 +183,8 @@ never a fact authority for title, authors, abstract, venue, URLs, or BibTeX.
   search matches, 300 characters of context, and a 500-character query. The
   daily CLI has an isolated-data-directory end-to-end regression covering the
   ten-paper and five-per-track limits without allowing LLM fields into facts.
+- The `core` track is tied to plan-owned `core_keywords`: an unrelated
+  candidate cannot be promoted to the five-paper core quota by an LLM label.
 
 ## 站点
 

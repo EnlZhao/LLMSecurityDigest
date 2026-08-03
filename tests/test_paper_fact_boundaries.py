@@ -647,3 +647,32 @@ def test_materialization_enforces_the_five_paper_track_limit(monkeypatch, tmp_pa
         "track": "core",
         "limit": 5,
     }
+
+
+def test_core_selection_requires_declared_core_keyword(monkeypatch, tmp_path) -> None:
+    doi = "10.1234/broad-only"
+    paper = _paper(
+        paper_id=f"doi:{doi}", source="crossref", source_id=doi,
+        title="General security paper", authors=["Alice Example"], doi=doi,
+    )
+    monkeypatch.setattr(pipeline, "refresh_authoritative", lambda paper, **_kwargs: paper)
+    monkeypatch.setattr(pipeline, "fetch_bibtex", lambda paper, **_kwargs: (
+        f"@article{{test, title={{{paper.title}}}, author={{Alice Example}}}}",
+        "https://doi.org/example",
+        {},
+    ))
+    monkeypatch.setattr(pipeline, "fetch_fulltext", lambda *_args, **_kwargs: {"sha256": "a" * 64, "path": "content.txt"})
+
+    facts, manifest = pipeline.materialize(
+        candidates_payload={
+            "candidates": [paper.to_dict()],
+            "plan": {"core_keywords": ["prompt injection"]},
+        },
+        selections=[SelectionEntry(paper.paper_id, 1.0, "Security", "ranked", "core")],
+        data_dir=tmp_path,
+        target=1,
+        scholar_limit=0,
+    )
+
+    assert facts["total"] == 0
+    assert manifest["rejected"] == [{"paper_id": paper.paper_id, "reason": "core_keyword_mismatch"}]

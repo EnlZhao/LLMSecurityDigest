@@ -30,6 +30,9 @@ DEFAULT_PLAN = {
     "filter_keywords": [
         "jailbreak", "prompt injection", "backdoor", "language model", "LLM", "agent security"
     ],
+    "core_keywords": [
+        "jailbreak", "prompt injection", "backdoor", "agent security"
+    ],
     "sources": ["official", "openreview", "crossref", "ieee_xplore", "arxiv"],
     "openreview_venues": list(DEFAULT_OPENREVIEW_VENUES),
     "target": 10,

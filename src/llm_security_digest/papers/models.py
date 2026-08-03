@@ -392,6 +392,10 @@ DEFAULT_OPENREVIEW_VENUES = [
 class SearchPlan:
     queries: list[str]
     filter_keywords: list[str] = field(default_factory=list)
+    # ``filter_keywords`` defines the daily broad direction.  A core
+    # selection must additionally match one of these terms before it can be
+    # materialized, so Hermes cannot relabel an unrelated candidate as core.
+    core_keywords: list[str] = field(default_factory=list)
     date_from: str | None = None
     date_to: str | None = None
     sources: list[str] = field(default_factory=lambda: ["official", "openreview", "crossref", "arxiv"])
@@ -427,6 +431,8 @@ class SearchPlan:
             raise ValueError("query plan exceeds safety limits")
         if len(self.filter_keywords) > 100 or any(not item.strip() or len(item) > 100 for item in self.filter_keywords):
             raise ValueError("filter_keywords exceeds safety limits")
+        if len(self.core_keywords) > 100 or any(not item.strip() or len(item) > 100 for item in self.core_keywords):
+            raise ValueError("core_keywords exceeds safety limits")
         supported = {"arxiv", "official", "openreview", "crossref", "ieee_xplore"}
         if not self.sources:
             raise ValueError("at least one source is required")

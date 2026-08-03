@@ -28,6 +28,9 @@ non-fact `track` value `core` or `broad`. Materialization publishes at
 most five verified records per track (five core plus five broad); a sixth
 verified record on a full track is rejected with a visible
 `track_quota_exceeded` reason. A source failure, quota rejection, or
+core candidate that does not match at least one plan-owned `core_keywords`
+term in its script-owned title or authoritative abstract is rejected visibly;
+Hermes cannot use a `core` label to override this boundary. An
 unverified paper must remain visible, and no shortfall is filled by an LLM
 guess or an automatic substitute.
 
