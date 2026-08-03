@@ -1420,6 +1420,7 @@ class CrossrefSource:
                     venue_errors.append({
                         "query": query,
                         "error_type": type(exc).__name__,
+                        "http_status": getattr(exc, "code", None),
                         "message": str(exc)[:300],
                     })
             reports.append({
@@ -1485,7 +1486,14 @@ class CrossrefSource:
         response: HttpResponse, *, expected_venue: str | Any
     ) -> tuple[list[PaperFacts], list[dict[str, Any]], dict[str, int]]:
         payload = response.json()
-        items = ((payload.get("message") or {}).get("items") or []) if isinstance(payload, dict) else []
+        if not isinstance(payload, dict):
+            raise ValueError("Crossref response must be an object")
+        message = payload.get("message")
+        if not isinstance(message, dict):
+            raise ValueError("Crossref response message must be an object")
+        if not isinstance(message.get("items"), list):
+            raise ValueError("Crossref response message items must be an array")
+        items = message["items"]
         provenance = _provenance(response, source="crossref_api")
         papers: list[PaperFacts] = []
         incomplete: list[dict[str, Any]] = []
@@ -1694,9 +1702,9 @@ class IeeeXploreSource:
     @staticmethod
     def parse_articles(response: HttpResponse, *, spec: Any) -> tuple[list[PaperFacts], list[dict[str, Any]], dict[str, int]]:
         payload = response.json()
-        articles = payload.get("articles", []) if isinstance(payload, dict) else []
-        if not isinstance(articles, list):
+        if not isinstance(payload, dict) or not isinstance(payload.get("articles"), list):
             raise ValueError("IEEE Xplore response articles must be an array")
+        articles = payload["articles"]
         papers: list[PaperFacts] = []
         incomplete: list[dict[str, Any]] = []
         filtered = 0

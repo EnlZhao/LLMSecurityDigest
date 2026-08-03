@@ -1,14 +1,18 @@
+import json
+
 import pytest
 
-from llm_security_digest.papers.http import HttpResponse
+from llm_security_digest.papers.http import HttpRequestError, HttpResponse
 from llm_security_digest.papers.http import _safe_url
 from llm_security_digest.papers.headless import HeadlessDiscoveryError, _normalized_allowed_hosts
-from llm_security_digest.papers.models import PaperFacts, SelectionEntry
+from llm_security_digest.papers.models import PaperFacts, SearchPlan, SelectionEntry, get_venue_spec
 from llm_security_digest.papers.openreview_client import openreview_failure_stage
 from llm_security_digest.papers import pipeline
 from llm_security_digest.papers.official import _pdf_url, _tree
 from llm_security_digest.papers.sources import (
     ArxivSource,
+    CrossrefSource,
+    IeeeXploreSource,
     OpenReviewSource,
     _is_explicit_final_venue,
     discovery_query_for_general_index,
@@ -34,6 +38,69 @@ def _paper(*, paper_id: str, source: str, source_id: str, title: str, authors: l
         collection_tier="formal" if source != "arxiv" else "arxiv_fallback",
         match_state="canonical" if source != "arxiv" else "unmatched",
     )
+
+
+class _ResponseClient:
+    def __init__(self, response: HttpResponse):
+        self.response = response
+
+    def get(self, *_args, **_kwargs) -> HttpResponse:
+        return self.response
+
+
+class _ErrorClient:
+    def __init__(self, error: Exception):
+        self.error = error
+
+    def get(self, *_args, **_kwargs):
+        raise self.error
+
+
+def _crossref_response(item: dict) -> HttpResponse:
+    return HttpResponse(
+        url="https://api.crossref.org/works",
+        final_url="https://api.crossref.org/works",
+        status=200,
+        headers={},
+        body=json.dumps({"message": {"items": [item]}}).encode(),
+    )
+
+
+def _crossref_item() -> dict:
+    return {
+        "DOI": "10.1109/SP.2026.1234567",
+        "title": ["Crossref authoritative title"],
+        "author": [{"given": "Alice", "family": "Example"}],
+        "abstract": "Crossref authoritative abstract.",
+        "container-title": ["IEEE Symposium on Security and Privacy"],
+        "published": {"date-parts": [[2026, 1, 2]]},
+        "link": [{"URL": "https://ieeexplore.ieee.org/document/1234567.pdf", "content-type": "application/pdf"}],
+        "ISSN": ["1081-6011"],
+        "type": "proceedings-article",
+    }
+
+
+def _ieee_response(article: dict) -> HttpResponse:
+    return HttpResponse(
+        url="https://ieeexploreapi.ieee.org/api/v1/search/articles",
+        final_url="https://ieeexploreapi.ieee.org/api/v1/search/articles",
+        status=200,
+        headers={},
+        body=json.dumps({"articles": [article]}).encode(),
+    )
+
+
+def _ieee_article() -> dict:
+    return {
+        "doi": "10.1109/SP.2026.1234567",
+        "title": "IEEE authoritative title",
+        "authors": [{"full_name": "Alice Example"}],
+        "abstract": "IEEE authoritative abstract.",
+        "publication_title": "IEEE Symposium on Security and Privacy",
+        "article_number": "1234567",
+        "html_url": "https://ieeexplore.ieee.org/document/1234567",
+        "pdf_url": "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=1234567",
+    }
 
 
 def test_arxiv_journal_reference_remains_unmatched_preprint() -> None:
@@ -402,6 +469,119 @@ def test_general_indexes_do_not_receive_arxiv_field_prefixes() -> None:
     query = 'abs:"jailbreak" OR abs:"prompt injection" AND ti:security'
 
     assert discovery_query_for_general_index(query) == '"jailbreak" OR "prompt injection" AND security'
+
+
+@pytest.mark.parametrize(
+    ("adapter", "plan", "expected_venue"),
+    [
+        (
+            CrossrefSource,
+            SearchPlan(queries=["security"], sources=["crossref"], crossref_venues=["ieee-sp"]),
+            "ieee-sp",
+        ),
+        (
+            IeeeXploreSource,
+            SearchPlan(queries=["security"], sources=["ieee_xplore"], venue_groups=["ieee-sp"]),
+            "ieee-sp",
+        ),
+    ],
+)
+@pytest.mark.parametrize("body", [b"", b"{}"])
+def test_formal_source_empty_or_malformed_response_is_reported(adapter, plan, expected_venue, body) -> None:
+    response = HttpResponse(
+        url="https://source.invalid/search",
+        final_url="https://source.invalid/search",
+        status=200,
+        headers={},
+        body=body,
+    )
+    source = adapter(_ResponseClient(response), api_key="test-key") if adapter is IeeeXploreSource else adapter(_ResponseClient(response))
+
+    result = source.discover_result(plan)
+
+    assert result.papers == []
+    assert result.incomplete == []
+    report = result.reports[0]
+    assert report["venue_group"] == expected_venue
+    assert report["status"] == "error"
+    assert report["errors"][0]["error_type"] in {"JSONDecodeError", "ValueError"}
+
+
+@pytest.mark.parametrize(
+    ("adapter", "plan"),
+    [
+        (CrossrefSource, SearchPlan(queries=["security"], sources=["crossref"], crossref_venues=["ieee-sp"])),
+        (IeeeXploreSource, SearchPlan(queries=["security"], sources=["ieee_xplore"], venue_groups=["ieee-sp"])),
+    ],
+)
+@pytest.mark.parametrize("error", [HttpRequestError(429, "https://source.invalid/search"), RuntimeError("client unavailable")])
+def test_formal_source_client_errors_remain_visible_in_reports(adapter, plan, error) -> None:
+    source = adapter(_ErrorClient(error), api_key="test-key") if adapter is IeeeXploreSource else adapter(_ErrorClient(error))
+
+    result = source.discover_result(plan)
+
+    assert result.papers == []
+    report = result.reports[0]
+    assert report["status"] == "error"
+    assert report["requests_attempted"] == 1
+    assert report["requests_failed"] == 1
+    assert report["errors"][0]["error_type"] == type(error).__name__
+    assert report["errors"][0]["message"]
+    assert report["errors"][0]["http_status"] == getattr(error, "code", None)
+
+
+@pytest.mark.parametrize("missing", ["abstract", "pdf_url"])
+def test_crossref_missing_abstract_or_pdf_stays_incomplete(missing) -> None:
+    item = _crossref_item()
+    if missing == "abstract":
+        item.pop("abstract")
+    else:
+        item["link"] = []
+
+    papers, incomplete = CrossrefSource.parse_items_with_incomplete(
+        _crossref_response(item), expected_venue="ieee-sp"
+    )
+
+    assert papers == []
+    assert incomplete[0]["reason"] == "required_crossref_field_missing"
+    assert missing in incomplete[0]["missing"]
+
+
+@pytest.mark.parametrize("missing", ["abstract", "pdf_url"])
+def test_ieee_missing_abstract_or_pdf_stays_incomplete(missing) -> None:
+    article = _ieee_article()
+    article.pop(missing)
+
+    papers, incomplete, _stats = IeeeXploreSource.parse_articles(
+        _ieee_response(article), spec=get_venue_spec("ieee-sp")
+    )
+
+    assert papers == []
+    assert incomplete[0]["reason"] == "required_ieee_field_missing"
+    assert missing in incomplete[0]["missing"]
+
+
+def test_missing_bibtex_is_rejected_before_materialization(monkeypatch, tmp_path) -> None:
+    doi = "10.1234/no-bibtex"
+    paper = _paper(
+        paper_id=f"doi:{doi}", source="crossref", source_id=doi,
+        title="No BibTeX Paper", authors=["Alice Example"], doi=doi,
+    )
+    monkeypatch.setattr(pipeline, "refresh_authoritative", lambda paper, **_kwargs: paper)
+    monkeypatch.setattr(pipeline, "fetch_bibtex", lambda *_args, **_kwargs: ("", "", {}))
+    monkeypatch.setattr(pipeline, "fetch_fulltext", lambda *_args, **_kwargs: {"sha256": "a" * 64, "path": "content.txt"})
+
+    facts, manifest = pipeline.materialize(
+        candidates_payload={"candidates": [paper.to_dict()]},
+        selections=[SelectionEntry(paper.paper_id, 1.0, "Security", "ranked", "core")],
+        data_dir=tmp_path,
+        target=1,
+        scholar_limit=0,
+    )
+
+    assert facts["total"] == 0
+    assert manifest["rejected"][0]["reason"] == "verification_failed"
+    assert "authoritative BibTeX unavailable" in manifest["rejected"][0]["message"]
 
 
 def test_openreview_v1_compatibility_keeps_v2_challenge_visible() -> None:
