@@ -41,6 +41,44 @@ DEFAULT_PLAN = {
     ],
 }
 
+MAX_SECTION_CHARS = 6_000
+MAX_FIND_LIMIT = 3
+MAX_FIND_CONTEXT = 300
+MAX_FIND_QUERY_CHARS = 500
+
+
+def _validate_segment_int(name: str, value: object, maximum: int) -> int:
+    if type(value) is not int or not 1 <= value <= maximum:
+        raise ValueError(f"{name} must be an integer between 1 and {maximum}")
+    return value
+
+
+def _segment_int_type(name: str, maximum: int):
+    def parse(value: str) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError) as exc:
+            raise argparse.ArgumentTypeError(f"{name} must be an integer") from exc
+        try:
+            return _validate_segment_int(name, parsed, maximum)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(str(exc)) from exc
+
+    return parse
+
+
+def _validate_find_query(value: object) -> str:
+    if not isinstance(value, str) or len(value) > MAX_FIND_QUERY_CHARS:
+        raise ValueError(f"--query must be at most {MAX_FIND_QUERY_CHARS} characters")
+    return value
+
+
+def _find_query_type(value: str) -> str:
+    try:
+        return _validate_find_query(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
 
 def _data_dir(value: str | None = None) -> Path:
     configured = value or os.getenv("LLMSD_DATA_DIR")
@@ -254,28 +292,32 @@ def _section_text(paper: dict, section_id: str, data_dir: Path) -> str:
 
 
 def command_read_section(args: argparse.Namespace) -> int:
+    max_chars = _validate_segment_int("--max-chars", args.max_chars, MAX_SECTION_CHARS)
     paper = _load_paper(args.facts, args.paper_id)
     value = _section_text(paper, args.section_id, _data_dir(args.data_dir))
-    sys.stdout.write(value[: args.max_chars] + "\n")
+    sys.stdout.write(value[:max_chars] + "\n")
     return 0
 
 
 def command_find(args: argparse.Namespace) -> int:
+    limit = _validate_segment_int("--limit", args.limit, MAX_FIND_LIMIT)
+    context = _validate_segment_int("--context", args.context, MAX_FIND_CONTEXT)
+    query_value = _validate_find_query(args.query)
     paper = _load_paper(args.facts, args.paper_id)
     text = _content_path(paper, "text_path", _data_dir(args.data_dir)).read_text(encoding="utf-8")
     lowered = text.casefold()
-    query = args.query.casefold()
+    query = query_value.casefold()
     cursor = 0
     matches = []
-    while len(matches) < args.limit:
+    while len(matches) < limit:
         index = lowered.find(query, cursor)
         if index < 0:
             break
-        start = max(index - args.context, 0)
-        end = min(index + len(args.query) + args.context, len(text))
+        start = max(index - context, 0)
+        end = min(index + len(args.query) + context, len(text))
         matches.append({"offset": index, "text": text[start:end]})
         cursor = index + len(query)
-    sys.stdout.write(json.dumps({"paper_id": args.paper_id, "query": args.query, "matches": matches}, ensure_ascii=False, indent=2) + "\n")
+    sys.stdout.write(json.dumps({"paper_id": args.paper_id, "query": query_value, "matches": matches}, ensure_ascii=False, indent=2) + "\n")
     return 0
 
 
@@ -393,16 +435,24 @@ def build_parser() -> argparse.ArgumentParser:
     read_section.add_argument("--facts", type=Path, required=True)
     read_section.add_argument("--paper-id", required=True)
     read_section.add_argument("--section-id", required=True)
-    read_section.add_argument("--max-chars", type=int, default=12000)
+    read_section.add_argument(
+        "--max-chars",
+        type=_segment_int_type("--max-chars", MAX_SECTION_CHARS),
+        default=MAX_SECTION_CHARS,
+    )
     read_section.add_argument("--data-dir")
     read_section.set_defaults(func=command_read_section)
 
     find = subparsers.add_parser("find", help="find bounded passages in verified full text")
     find.add_argument("--facts", type=Path, required=True)
     find.add_argument("--paper-id", required=True)
-    find.add_argument("--query", required=True)
-    find.add_argument("--limit", type=int, default=5)
-    find.add_argument("--context", type=int, default=500)
+    find.add_argument("--query", type=_find_query_type, required=True)
+    find.add_argument("--limit", type=_segment_int_type("--limit", MAX_FIND_LIMIT), default=MAX_FIND_LIMIT)
+    find.add_argument(
+        "--context",
+        type=_segment_int_type("--context", MAX_FIND_CONTEXT),
+        default=MAX_FIND_CONTEXT,
+    )
     find.add_argument("--data-dir")
     find.set_defaults(func=command_find)
 
