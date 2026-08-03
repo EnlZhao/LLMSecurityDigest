@@ -1457,10 +1457,20 @@ class IJCAIAdapter(OfficialAdapter):
         )
 
     @staticmethod
-    def parse_papers(html_text: str, *, spec: VenueSpec, year: int, base_url: str, detail_loader: Callable[[str], tuple[str, HttpResponse | None]] | None = None) -> list[ParsedRecord]:
+    def parse_papers(
+        html_text: str,
+        *,
+        spec: VenueSpec,
+        year: int,
+        base_url: str,
+        detail_loader: Callable[[str], tuple[str, HttpResponse | None]] | None = None,
+        max_records: int | None = None,
+    ) -> list[ParsedRecord]:
         root = _tree(html_text)
         records: list[ParsedRecord] = []
         for node in _nodes(root, class_name="paper_wrapper"):
+            if max_records is not None and len(records) >= max_records:
+                break
             title_node = _first(node, class_name="title")
             authors_node = _first(node, class_name="authors")
             title = title_node.text() if title_node else ""
@@ -1540,7 +1550,14 @@ class IJCAIAdapter(OfficialAdapter):
                     detail_response = self._get(url)
                     fetched += 1
                     return detail_response.text(), detail_response
-                records = self.parse_papers(response.text(), spec=spec, year=year, base_url=list_url, detail_loader=load_detail)
+                records = self.parse_papers(
+                    response.text(),
+                    spec=spec,
+                    year=year,
+                    base_url=list_url,
+                    detail_loader=load_detail,
+                    max_records=plan.max_results_per_venue - len(papers) - len(incomplete),
+                )
                 for record in records:
                     if len(papers) >= plan.max_results_per_venue:
                         break

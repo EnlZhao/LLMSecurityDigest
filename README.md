@@ -154,6 +154,9 @@ never a fact authority for title, authors, abstract, venue, URLs, or BibTeX.
 
 ### 2026-08-04
 
+- IJCAI proceedings discovery now enforces the per-venue candidate budget
+  before fetching detail pages, so a large proceedings index cannot turn a
+  bounded daily collection into unbounded detail requests.
 - Evolution overlays can no longer change the baseline source list. Historical
   overlays which carry the retired field remain auditable, but collection
   ignores it and retains the formal-source-first baseline order.

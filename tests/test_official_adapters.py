@@ -128,6 +128,39 @@ def test_ijcai_paper_links_cannot_route_detail_fetches_off_host() -> None:
     ]
 
 
+def test_ijcai_detail_fetches_obey_discovery_budget() -> None:
+    html = "".join(
+        f'''<div class="paper_wrapper">
+          <div class="title">Paper {number}</div><div class="authors">Author {number}</div>
+          <a href="{number:04d}.pdf">PDF</a><a href="/proceedings/2024/{number}">Details</a>
+        </div>'''
+        for number in range(1, 4)
+    )
+    fetched: list[str] = []
+
+    def load_detail(url: str) -> tuple[str, object]:
+        fetched.append(url)
+        return (
+            "<meta name=\"citation_title\" content=\"Verified paper\">"
+            "<meta name=\"citation_author\" content=\"Alice Example\">"
+            "<meta name=\"citation_pdf_url\" content=\"https://www.ijcai.org/proceedings/2024/0001.pdf\">"
+            "<meta name=\"description\" content=\"Verified abstract.\">",
+            None,
+        )
+
+    records = IJCAIAdapter.parse_papers(
+        html,
+        spec=get_venue_spec("ijcai"),
+        year=2024,
+        base_url="https://www.ijcai.org/proceedings/2024/",
+        detail_loader=load_detail,
+        max_records=1,
+    )
+
+    assert len(records) == 1
+    assert fetched == ["https://www.ijcai.org/proceedings/2024/1"]
+
+
 def test_usenix_presentation_links_are_bound_to_usenix_host() -> None:
     html = """
     <a href="/conference/usenixsecurity24/presentation/official">official</a>
