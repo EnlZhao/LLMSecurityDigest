@@ -242,6 +242,101 @@ def test_openreview_terminal_venues_are_visible_and_v1_uses_registered_request_v
     }]
 
 
+def test_openreview_rejects_cross_year_venue_and_refreshes_registered_legacy_final_note() -> None:
+    response = HttpResponse(
+        url="https://api2.openreview.net/notes",
+        final_url="https://api2.openreview.net/notes",
+        status=200,
+        headers={},
+        body=b"{}",
+    )
+    cross_year = {
+        "id": "cross-year-submission",
+        "forum": "cross-year-forum",
+        "content": {
+            "title": "Cross Year Paper",
+            "authors": ["Alice Example"],
+            "abstract": "Cross year abstract.",
+            "venueid": "ICLR.cc/2024/Conference",
+        },
+    }
+    decision = {
+        "id": "cross-year-decision",
+        "forum": "cross-year-forum",
+        "invitations": ["ICLR.cc/2024/Conference/-/Decision"],
+        "content": {"decision": "Accept (Poster)"},
+    }
+    papers, _incomplete = OpenReviewSource.parse_notes_with_incomplete(
+        [cross_year, decision],
+        venue_id="ICLR.cc/2025/Conference",
+        response=response,
+    )
+    assert papers == []
+
+    legacy = {
+        "id": "legacy-id",
+        "forum": "legacy-forum",
+        "content": {
+            "title": "Legacy Refreshed Paper",
+            "authors": ["Alice Example"],
+            "abstract": "Legacy refreshed abstract.",
+            "venue": "ICLR 2025 Conference (Poster)",
+        },
+    }
+
+    class V2:
+        def get_notes(self, **kwargs):
+            if "id" in kwargs:
+                return [legacy]
+            return []
+
+    class V1:
+        def get_notes(self, **_kwargs):
+            return []
+
+    class Factory:
+        def get(self, version: str):
+            return V2() if version == "v2" else V1()
+
+    refreshed = OpenReviewSource(Factory()).fetch_by_id("legacy-forum")
+    assert refreshed.paper_id == "openreview:legacy-forum"
+    assert refreshed.venue == "International Conference on Learning Representations"
+
+
+def test_openreview_missing_venueid_cannot_use_conflicting_legacy_final_year() -> None:
+    response = HttpResponse(
+        url="https://api2.openreview.net/notes",
+        final_url="https://api2.openreview.net/notes",
+        status=200,
+        headers={},
+        body=b"{}",
+    )
+    submission = {
+        "id": "legacy-cross-year-submission",
+        "forum": "legacy-cross-year-forum",
+        "content": {
+            "title": "Legacy Cross Year Paper",
+            "authors": ["Alice Example"],
+            "abstract": "A legacy record with a conflicting final year.",
+            "venue": "ICLR 2024 Conference (Poster)",
+        },
+    }
+    accepted = {
+        "id": "legacy-cross-year-decision",
+        "forum": "legacy-cross-year-forum",
+        "invitations": ["ICLR.cc/2024/Conference/-/Decision"],
+        "content": {"decision": "Accept (Poster)"},
+    }
+
+    papers, _incomplete = OpenReviewSource.parse_notes_with_incomplete(
+        [submission, accepted],
+        venue_id="ICLR.cc/2025/Conference",
+        response=response,
+    )
+
+    assert papers == []
+
+
 def test_headless_fallback_cannot_expand_the_baseline_host_registry() -> None:
     with pytest.raises(HeadlessDiscoveryError, match="not registered"):
         _normalized_allowed_hosts({"example.invalid"})

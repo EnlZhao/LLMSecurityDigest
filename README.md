@@ -157,9 +157,11 @@ never a fact authority for title, authors, abstract, venue, URLs, or BibTeX.
   legacy final-venue form with a verified final track.
 - OpenReview withdrawn and desk-rejected child venues now remain visible as
   terminal incomplete records instead of being silently filtered. Legacy v1
-  notes can use only the registered queried venue when `venueid` is absent,
-  and v2 unified author profiles are normalized from explicit names rather
-  than serialized as JSON-like author text.
+  notes can use only the registered queried venue, or a unique registered
+  final venue label, when `venueid` is absent. The requested conference year
+  is exact rather than family-wide, and v2 unified author profiles are
+  normalized from explicit names rather than serialized as JSON-like author
+  text.
 - Formal-source records no longer fabricate `YYYY-01-01` from a proceedings
   year. An unknown authoritative date remains unknown, while the baseline
   source ID retains only the year needed to rebuild an official route.

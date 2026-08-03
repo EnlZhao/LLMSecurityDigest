@@ -572,6 +572,16 @@ def _is_explicit_final_venue(venue_text: str, assigned_venue_id: str) -> bool:
     ))
 
 
+def _registered_legacy_final_venue(venue_text: str) -> tuple[str, Any] | None:
+    """Resolve a venue-less legacy final label only against registered IDs."""
+    matches: list[tuple[str, Any]] = []
+    for spec in VENUE_SPECS:
+        for registered_id in spec.openreview_ids:
+            if _is_explicit_final_venue(venue_text, registered_id):
+                matches.append((registered_id, spec))
+    return matches[0] if len(matches) == 1 else None
+
+
 def _reply_forum(note: dict[str, Any]) -> str:
     for key in ("forum", "parentForum", "parentNote", "replyto"):
         value = note.get(key)
@@ -1198,8 +1208,20 @@ class OpenReviewSource:
             if not assigned_venue_id:
                 # Older v1 submissions may omit venueid while the requested,
                 # baseline-registered invitation still identifies their venue.
-                # Do not infer a venue during direct identity lookups.
-                if requested_spec is None or not venue_id:
+                # During direct identity refresh, accept only a final label
+                # that exactly maps to one registry-owned OpenReview ID.
+                legacy_assignment = _registered_legacy_final_venue(venue_text)
+                if requested_spec is not None and venue_id:
+                    if legacy_assignment is not None:
+                        legacy_venue_id, _legacy_spec = legacy_assignment
+                        normalized_legacy = unicodedata.normalize("NFKC", legacy_venue_id).strip().rstrip("/").casefold()
+                        normalized_requested = unicodedata.normalize("NFKC", venue_id).strip().rstrip("/").casefold()
+                        if normalized_legacy != normalized_requested:
+                            continue
+                    assigned_venue_id = venue_id
+                elif legacy_assignment is not None:
+                    assigned_venue_id, _legacy_spec = legacy_assignment
+                else:
                     incomplete.append({
                         "source": "openreview",
                         "adapter": "openreview",
@@ -1208,7 +1230,6 @@ class OpenReviewSource:
                         "reason": "missing_assigned_venue_id",
                     })
                     continue
-                assigned_venue_id = venue_id
             terminal_venue = _openreview_terminal_venue(assigned_venue_id)
             assigned_base_venue = terminal_venue[0] if terminal_venue else assigned_venue_id
             assigned_spec = get_venue_spec(assigned_base_venue)
@@ -1223,10 +1244,14 @@ class OpenReviewSource:
                     "assigned_venue_id": assigned_venue_id,
                 })
                 continue
-            venue_matches = assigned_base_venue == venue_id or (
-                requested_spec is not None and requested_spec.matches_openreview(assigned_base_venue)
+            # A plan venue is a concrete invitation, not a family selector.
+            # A same-family result from another year must not leak into the
+            # requested collection window. Direct refresh has no such filter.
+            venue_matches = not venue_id or (
+                unicodedata.normalize("NFKC", assigned_base_venue).strip().rstrip("/").casefold()
+                == unicodedata.normalize("NFKC", venue_id).strip().rstrip("/").casefold()
             )
-            if venue_id and assigned_venue_id and not venue_matches:
+            if not venue_matches:
                 continue
             forum_hint = _text(note.get("forum") or note.get("id"))
             if terminal_venue is not None:

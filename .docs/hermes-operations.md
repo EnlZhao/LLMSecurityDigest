@@ -82,8 +82,10 @@ container titles. The formal tier is routed to deterministic adapters in
   authorization failures remain visible in the source report with their
   request stage and error type.
   Legacy v1 root notes that omit `content.venueid` may use only the already
-  registered venue requested by the baseline query; direct identity refreshes
-  never infer that missing value. Explicit child venue IDs such as
+  registered venue requested by the baseline query. During direct identity
+  refresh, the only alternative is a unique registry match for the complete
+  final label (venue family, year, and `Poster`/`Oral`/`Spotlight` track);
+  a generic label never infers the missing value. Explicit child venue IDs such as
   `Withdrawn_Submission` and `Desk_Rejected_Submission` are terminal outcomes:
   they remain visible as `rejected_or_withdrawn` incomplete records and can
   never become accepted candidates. Unified v2 author profiles are reduced
