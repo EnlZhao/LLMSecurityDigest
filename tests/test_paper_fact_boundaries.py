@@ -84,6 +84,61 @@ def test_openreview_challenge_is_not_misreported_as_login_failure() -> None:
     assert openreview_failure_stage(AuthError("authentication challenge required"), "venue_query") == "auth"
 
 
+def test_openreview_v2_acceptance_requires_an_explicit_decision_reply() -> None:
+    response = HttpResponse(
+        url="https://api2.openreview.net/notes",
+        final_url="https://api2.openreview.net/notes",
+        status=200,
+        headers={},
+        body=b"{}",
+    )
+    submission = {
+        "id": "submission-id",
+        "forum": "forum-id",
+        "content": {
+            "title": "Verified OpenReview Paper",
+            "authors": ["Alice Example", "Bob Example"],
+            "abstract": "Authoritative abstract from the OpenReview submission.",
+            "venueid": "ICLR.cc/2025/Conference",
+            "venue": "ICLR 2025 Conference",
+        },
+    }
+    accepted = {
+        "id": "decision-id",
+        "forum": "forum-id",
+        "invitations": ["ICLR.cc/2025/Conference/-/Decision"],
+        "content": {"decision": "Accept (Poster)"},
+    }
+    rejected = {
+        "id": "rejected-id",
+        "forum": "other-forum",
+        "invitations": ["ICLR.cc/2025/Conference/-/Decision"],
+        "content": {"decision": "Reject"},
+    }
+    pending = {
+        "id": "pending-id",
+        "forum": "pending-forum",
+        "content": {
+            "title": "Pending Paper",
+            "authors": ["Alice Example"],
+            "abstract": "Pending abstract.",
+            "venueid": "ICLR.cc/2025/Conference",
+            "venue": "ICLR 2025 Conference",
+        },
+    }
+
+    papers, incomplete = OpenReviewSource.parse_notes_with_incomplete(
+        [submission, accepted, rejected, pending],
+        venue_id="ICLR.cc/2025/Conference",
+        response=response,
+    )
+
+    assert [paper.paper_id for paper in papers] == ["openreview:forum-id"]
+    assert papers[0].publication_status == "accepted"
+    assert papers[0].venue == "International Conference on Learning Representations"
+    assert {item["reason"] for item in incomplete} == {"pending_decision"}
+
+
 def test_headless_fallback_cannot_expand_the_baseline_host_registry() -> None:
     with pytest.raises(HeadlessDiscoveryError, match="not registered"):
         _normalized_allowed_hosts({"example.invalid"})

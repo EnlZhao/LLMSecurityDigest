@@ -150,6 +150,9 @@ never a fact authority for title, authors, abstract, venue, URLs, or BibTeX.
 - Shared daily queries now retain arXiv field syntax for the Atom API while
   removing those field prefixes for Crossref and IEEE Xplore. This keeps the
   same keywords portable across the registered formal discovery APIs.
+- OpenReview no longer treats a generic `Conference` venue label as an
+  acceptance decision. It requires an explicit decision reply, or the narrow
+  legacy final-venue form with a verified final track.
 - Formal-source records no longer fabricate `YYYY-01-01` from a proceedings
   year. An unknown authoritative date remains unknown, while the baseline
   source ID retains only the year needed to rebuild an official route.

@@ -516,9 +516,9 @@ def _is_explicit_final_venue(venue_text: str, assigned_venue_id: str) -> bool:
 
     A free-form venue string such as ``"accepted"`` or ``"poster"`` is not
     evidence of acceptance.  The legacy API sometimes omits decision replies,
-    but its final venue label is still structured as ``PREFIX YEAR
-    CONFERENCE`` (optionally followed by a final track).  Require the venue
-    id, year, and prefix to agree before using that compatibility path.
+    but its final venue label includes a finite final track, such as
+    ``PREFIX YEAR Conference (Poster)``. Require the venue id, year, prefix,
+    and final track to agree before using that compatibility path.
     """
     venue = re.sub(r"\s+", " ", _text(venue_text)).strip().casefold()
     assigned = re.sub(r"\s+", "", _text(assigned_venue_id)).strip().casefold()
@@ -531,7 +531,7 @@ def _is_explicit_final_venue(venue_text: str, assigned_venue_id: str) -> bool:
     # accepted vocabulary is deliberately finite; "submission" and other
     # free-form labels therefore cannot upgrade a record.
     return bool(re.fullmatch(
-        rf"{prefix}\s+{year}\s+(?:conference(?:\s*(?:\((?:poster|oral|spotlight)\)|(?:poster|oral|spotlight)))?|(?:poster|oral|spotlight))",
+        rf"{prefix}\s+{year}\s+(?:conference\s*(?:\((?:poster|oral|spotlight)\)|(?:poster|oral|spotlight))|(?:poster|oral|spotlight))",
         venue,
     ))
 

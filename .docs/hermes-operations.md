@@ -211,7 +211,10 @@ notes = client.get_notes(
 
 The adapter advances `offset` until its per-venue budget is reached, joins
 forum replies in bounded pages, and classifies only an assigned venue plus an
-explicit decision. It never treats an unstructured page label as acceptance.
+explicit decision. The legacy compatibility path requires an exact final
+venue label with a finite track (`Poster`, `Oral`, or `Spotlight`); a generic
+`Conference` label never establishes acceptance. It never treats an
+unstructured page label as acceptance.
 
 Every adapter returns a structured report. At minimum inspect `status`,
 `error_type`, `requests_attempted`, `requests_succeeded`, `records_scanned`,
