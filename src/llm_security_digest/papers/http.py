@@ -210,9 +210,11 @@ class HttpClient:
                         transport="http",
                         provenance={
                             "source_url": _safe_url(url, provenance_url),
+                            "requested_url": _safe_url(url, provenance_url),
                             "final_url": _safe_url(response.geturl()),
                             "http_status": int(getattr(response, "status", 200)),
                             "response_sha256": hashlib.sha256(body).hexdigest(),
+                            "sha256": hashlib.sha256(body).hexdigest(),
                             "transport": "http",
                         },
                     )

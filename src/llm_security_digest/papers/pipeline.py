@@ -478,6 +478,7 @@ def fetch_bibtex(paper: PaperFacts, *, client: HttpClient) -> tuple[str, str, di
     provenance = {
         "source": "authoritative_bibtex_endpoint",
         "source_url": url,
+        "requested_url": url,
         "final_url": response.final_url,
         "transport": response.transport,
         "redirect_chain": list(response.redirect_chain),
