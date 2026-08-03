@@ -69,6 +69,10 @@ def _registered_hosts() -> frozenset[str]:
         "www.ndss-symposium.org", "ieeexplore.ieee.org", "dl.acm.org",
         "www.sigsac.org", "api2.openreview.net", "api.openreview.net",
         "openreview.net", "arxiv.org", "export.arxiv.org",
+        # Additional baseline-owned hosts used by the deterministic DOI,
+        # Crossref, IEEE, and PMLR full-text routes.
+        "api.crossref.org", "doi.org", "ieeexploreapi.ieee.org",
+        "www.ieee-security.org", "raw.githubusercontent.com",
     })
     return frozenset(values)
 
@@ -82,6 +86,11 @@ def _normalized_allowed_hosts(allowed_hosts: Iterable[str] | None) -> frozenset[
     )
     if not values:
         raise HeadlessDiscoveryError("browser host allowlist must not be empty")
+    unregistered = values - ALLOWED_HOSTS
+    if unregistered:
+        raise HeadlessDiscoveryError(
+            f"browser hosts are not registered: {sorted(unregistered)}"
+        )
     return values
 
 
@@ -458,7 +467,10 @@ class HeadlessDiscovery:
         try:
             playwright = manager.start()
             browser = playwright.chromium.launch(headless=True)
-            context = browser.new_context(java_script_enabled=True)
+            context = browser.new_context(
+                java_script_enabled=True,
+                service_workers="block",
+            )
             if callable(getattr(context, "route", None)):
                 _install_route_guard(context, allowed_hosts=ALLOWED_HOSTS)
             page = context.new_page()

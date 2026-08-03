@@ -1,7 +1,12 @@
+import pytest
+
 from llm_security_digest.papers.http import HttpResponse
+from llm_security_digest.papers.http import _safe_url
+from llm_security_digest.papers.headless import HeadlessDiscoveryError, _normalized_allowed_hosts
 from llm_security_digest.papers.models import PaperFacts, SelectionEntry
 from llm_security_digest.papers.openreview_client import openreview_failure_stage
 from llm_security_digest.papers import pipeline
+from llm_security_digest.papers.official import _pdf_url, _tree
 from llm_security_digest.papers.sources import ArxivSource, OpenReviewSource, reconcile_arxiv_to_formal
 
 
@@ -72,6 +77,67 @@ def test_openreview_challenge_is_not_misreported_as_login_failure() -> None:
 
     assert openreview_failure_stage(ChallengeError("Challenge verification required"), "venue_query") == "challenge"
     assert openreview_failure_stage(AuthError("authentication challenge required"), "venue_query") == "auth"
+
+
+def test_headless_fallback_cannot_expand_the_baseline_host_registry() -> None:
+    with pytest.raises(HeadlessDiscoveryError, match="not registered"):
+        _normalized_allowed_hosts({"example.invalid"})
+
+
+def test_crossref_mailto_is_redacted_from_provenance_urls() -> None:
+    value = _safe_url("https://api.crossref.org/works?query=security&mailto=person%40example.com")
+
+    assert "person%40example.com" not in value
+    assert "mailto=%3Credacted%3E" in value
+
+
+def test_official_download_link_to_bibtex_is_not_treated_as_pdf() -> None:
+    root = _tree('<a href="/biblio/export/bibtex/309953">Download</a>')
+
+    assert _pdf_url(root, "https://www.usenix.org/conference/usenixsecurity25/presentation/adida") == ""
+
+
+def test_official_citation_pdf_metadata_remains_preferred() -> None:
+    root = _tree(
+        '<meta name="citation_pdf_url" content="https://cdn.example.org/paper.pdf">'
+        '<a href="/biblio/export/bibtex/309953">Download</a>'
+    )
+
+    assert _pdf_url(root, "https://www.usenix.org/conference/usenixsecurity25/presentation/adida") == "https://cdn.example.org/paper.pdf"
+
+
+def test_official_download_link_to_real_pdf_remains_accepted() -> None:
+    root = _tree('<a href="/paper.pdf">Download</a>')
+
+    assert _pdf_url(root, "https://www.usenix.org/conference/usenixsecurity25/presentation/adida") == "https://www.usenix.org/paper.pdf"
+
+
+def test_formal_deduplication_requires_strict_identity_proof() -> None:
+    canonical = _paper(
+        paper_id="official:paper", source="official", source_id="paper",
+        title="Unicode-Safe Paper", authors=["Alice Example", "Bob Example"], doi="10.1234/same",
+    )
+    duplicate = _paper(
+        paper_id="crossref:paper", source="crossref", source_id="paper",
+        title="Different Display Title", authors=["Carol Example"], doi="10.1234/same",
+    )
+    near_match = _paper(
+        paper_id="ieee_xplore:paper", source="ieee_xplore", source_id="paper",
+        title="Unicode-Safe Paper", authors=["Alice Example", "Carol Example"], doi=None,
+    )
+    reports: list[dict] = []
+
+    retained = pipeline._deduplicate_formal_records([canonical, duplicate, near_match], reports)
+
+    assert [paper.paper_id for paper in retained] == [canonical.paper_id, near_match.paper_id]
+    assert reports == [{
+        "source": "formal_dedup",
+        "adapter": "formal_dedup",
+        "status": "duplicate",
+        "canonical_id": canonical.paper_id,
+        "duplicate_id": duplicate.paper_id,
+        "method": "doi_exact",
+    }]
 
 
 def test_openreview_v1_compatibility_keeps_v2_challenge_visible() -> None:

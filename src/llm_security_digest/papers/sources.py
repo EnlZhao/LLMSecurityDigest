@@ -296,6 +296,26 @@ def author_jaccard(left: Iterable[str], right: Iterable[str]) -> float:
     return len(left_set & right_set) / len(left_set | right_set)
 
 
+def formal_duplicate_match(left: PaperFacts, right: PaperFacts) -> tuple[str, float | None] | None:
+    """Return the narrow identity proof allowed for formal-source de-duplication.
+
+    This deliberately does not merge metadata. It only lets the caller retain
+    its earlier canonical source when the duplicate identity is proven.
+    """
+    left_doi = normalize_doi(left.doi or left.identifiers.get("doi", ""))
+    right_doi = normalize_doi(right.doi or right.identifiers.get("doi", ""))
+    if left_doi or right_doi:
+        return ("doi_exact", None) if left_doi and left_doi == right_doi else None
+    if normalize_title(left.title) != normalize_title(right.title):
+        return None
+    if not left.authors or not right.authors:
+        return None
+    if _author_identity(left.authors[0]) != _author_identity(right.authors[0]):
+        return None
+    similarity = author_jaccard(left.authors, right.authors)
+    return ("title_author", similarity) if similarity >= 0.8 else None
+
+
 def reconcile_arxiv_to_formal(
     arxiv: PaperFacts, formal_records: Iterable[PaperFacts]
 ) -> tuple[PaperFacts | None, dict[str, Any]]:
@@ -325,17 +345,11 @@ def reconcile_arxiv_to_formal(
         # A non-matching advertised DOI is evidence against title-only
         # reconciliation; do not silently pair it with a different DOI.
         return None, {"state": "unmatched", "method": "doi_exact", "reason": "doi_not_found"}
-    title_key = normalize_title(arxiv.title)
-    first_author = _author_identity(arxiv.authors[0]) if arxiv.authors else ""
     matches = []
     for record in records:
-        if normalize_title(record.title) != title_key:
-            continue
-        if not record.authors or _author_identity(record.authors[0]) != first_author:
-            continue
-        similarity = author_jaccard(arxiv.authors, record.authors)
-        if similarity >= 0.8:
-            matches.append((record, similarity))
+        match = formal_duplicate_match(arxiv, record)
+        if match and match[0] == "title_author":
+            matches.append((record, match[1] or 0.0))
     if len(matches) == 1:
         record, similarity = matches[0]
         return _merge_arxiv_alternate(record, arxiv, state="title_author"), {

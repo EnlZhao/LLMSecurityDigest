@@ -19,6 +19,7 @@ from .sources import (
     OfficialSource,
     OpenReviewSource,
     official_route_for_paper,
+    formal_duplicate_match,
     reconcile_arxiv_to_formal,
     trusted_fulltext_url,
     trusted_fulltext_hosts,
@@ -103,6 +104,32 @@ def _source_summary_status(reports: list[dict[str, Any]], *, discovered: int, in
     return "ok"
 
 
+def _deduplicate_formal_records(records: list[PaperFacts], reports: list[dict[str, Any]]) -> list[PaperFacts]:
+    """Keep the first source-ordered formal record only when identity is proven."""
+    canonical: list[PaperFacts] = []
+    for paper in records:
+        duplicate = next(
+            ((existing, proof) for existing in canonical if (proof := formal_duplicate_match(existing, paper))),
+            None,
+        )
+        if duplicate is None:
+            canonical.append(paper)
+            continue
+        existing, (method, similarity) = duplicate
+        report: dict[str, Any] = {
+            "source": "formal_dedup",
+            "adapter": "formal_dedup",
+            "status": "duplicate",
+            "canonical_id": existing.paper_id,
+            "duplicate_id": paper.paper_id,
+            "method": method,
+        }
+        if similarity is not None:
+            report["author_jaccard"] = similarity
+        reports.append(report)
+    return canonical
+
+
 def collect(plan: SearchPlan, *, client: HttpClient | None = None) -> dict[str, Any]:
     client = client or default_client()
     adapters = {
@@ -169,7 +196,10 @@ def collect(plan: SearchPlan, *, client: HttpClient | None = None) -> dict[str, 
                 })
         except Exception as exc:
             reports.append({"source": source_name, "adapter": source_name, "status": "error", "error_type": type(exc).__name__, "message": _error_message(exc, limit=300)})
-    formal = [paper for paper in candidates.values() if paper.source != "arxiv" and paper.collection_tier == "formal"]
+    formal = _deduplicate_formal_records(
+        [paper for paper in candidates.values() if paper.source != "arxiv" and paper.collection_tier == "formal"],
+        reports,
+    )
     arxiv = [paper for paper in candidates.values() if paper.source == "arxiv"]
     # An arXiv record is retained as an alternate identity only when the
     # formal source match is unambiguous. Unresolved matches remain visible in

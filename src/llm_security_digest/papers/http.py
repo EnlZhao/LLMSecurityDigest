@@ -15,6 +15,9 @@ from urllib import error, parse, request
 _SECRET_QUERY_MARKERS = frozenset({
     "key", "api_key", "apikey", "access_token", "token", "secret", "password",
     "passwd", "authorization", "auth", "credential", "cookie", "session",
+    # Crossref's polite-pool contact address is not a credential, but it is
+    # personal information and must not enter candidate artifacts or logs.
+    "mailto", "email", "e_mail",
 })
 _SECRET_QUERY_COMPONENTS = frozenset(
     marker for marker in _SECRET_QUERY_MARKERS if "_" not in marker

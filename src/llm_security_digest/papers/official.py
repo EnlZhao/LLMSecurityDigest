@@ -225,8 +225,13 @@ def _pdf_url(root: _Node, base: str) -> str:
         return values[0]
     for label, href in _hrefs(root):
         absolute = _absolute(href, base)
-        lowered = f"{label} {href}".casefold()
-        if absolute.startswith("https://") and (absolute.casefold().endswith(".pdf") or "pdf" in lowered or label.casefold() in {"paper", "download"}):
+        parsed = urlparse(absolute)
+        # A generic "Download" link can be a citation export or supplementary
+        # archive. Only accept a URL that identifies itself as a PDF.
+        if absolute.startswith("https://") and (
+            parsed.path.casefold().endswith(".pdf")
+            or ".pdf/" in parsed.path.casefold()
+        ):
             return absolute
     return ""
 
