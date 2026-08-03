@@ -73,7 +73,10 @@ def _v1_submission_invitation(venue_id: str) -> str:
     return f"{value}/-/Submission"
 
 
-_OPENREVIEW_RECOVERY_HOSTS = frozenset({"api2.openreview.net"})
+# A v2 challenge redirects the browser from the fixed API endpoint to this
+# official challenge page, then back to the same endpoint. No other host is
+# permitted during recovery.
+_OPENREVIEW_RECOVERY_HOSTS = frozenset({"api2.openreview.net", "openreview.net"})
 _OPENREVIEW_RECOVERY_PARAMS = (
     "content.venueid",
     "limit",
@@ -679,12 +682,16 @@ class ArxivSource:
         requests_succeeded = 0
         records_scanned = 0
         records_filtered = 0
+        venue_limit = plan.max_results_per_venue
         for query in plan.queries:
+            if len(papers) >= venue_limit:
+                break
+            remaining = venue_limit - len(papers)
             params = {
                 "search_query": query,
                 "sortBy": "submittedDate",
                 "sortOrder": "descending",
-                "max_results": str(plan.max_results_per_query),
+                "max_results": str(min(plan.max_results_per_query, remaining)),
             }
             url = f"{ARXIV_API_URL}?{parse.urlencode(params)}"
             requests_attempted += 1
@@ -697,10 +704,14 @@ class ArxivSource:
                 )
                 requests_succeeded += 1
                 parsed, parsed_incomplete, stats = self.parse_feed_with_incomplete(response)
-                papers.extend(parsed)
+                # The API should honor ``max_results``, but enforce the venue
+                # budget locally so a source-side over-return cannot expand
+                # the daily collection beyond its configured limit.
+                accepted = parsed[:remaining]
+                papers.extend(accepted)
                 incomplete.extend(parsed_incomplete)
                 records_scanned += stats["scanned"]
-                records_filtered += stats["filtered"]
+                records_filtered += stats["filtered"] + max(len(parsed) - len(accepted), 0)
             except Exception as exc:
                 errors.append({
                     "query": query,
@@ -717,8 +728,8 @@ class ArxivSource:
             "fetched": requests_succeeded,
             "parsed": len(papers),
             "filtered": records_filtered,
-            "truncated": False,
-            "budget_exhausted": False,
+            "truncated": len(papers) >= venue_limit,
+            "budget_exhausted": len(papers) >= venue_limit,
             "incomplete": len(incomplete),
             "records_scanned": records_scanned,
             "records_valid": len(papers),
@@ -1219,6 +1230,9 @@ class OpenReviewSource:
                 raise TypeError("OpenReview HTTP recovery returned an invalid response")
             if not 200 <= response.status < 300:
                 raise HttpRequestError(response.status, response.url)
+            content_type = response.headers.get("content-type", "").casefold()
+            if "application/json" not in content_type:
+                raise ValueError("OpenReview challenge recovery returned non-JSON content")
             payload = response.json()
             if not isinstance(payload, dict):
                 raise ValueError("OpenReview recovery response must be an object")

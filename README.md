@@ -196,8 +196,13 @@ never a fact authority for title, authors, abstract, venue, URLs, or BibTeX.
   candidate cannot be promoted to the five-paper core quota by an LLM label.
 - OpenReview v2 remains the primary client. An explicitly classified anti-bot
   challenge may use only the fixed, allowlisted `api2.openreview.net` raw
-  response recovery path; plain 403 authentication or forbidden errors stay
-  on the visible official-client compatibility path and cannot invoke it.
+  response recovery path and its fixed official `openreview.net/challenge`
+  redirect; plain 403 authentication or forbidden errors stay on the visible
+  official-client compatibility path and cannot invoke it. A Turnstile page is
+  reported as a challenge, never parsed as notes or bypassed by Hermes.
+- arXiv discovery now obeys the plan's per-source candidate budget even when
+  several queries are configured. The collector stops subsequent requests at
+  the budget and locally clips a nonconforming API response.
 
 ## 站点
 

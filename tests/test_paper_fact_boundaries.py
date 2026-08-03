@@ -154,6 +154,50 @@ def test_arxiv_journal_reference_remains_unmatched_preprint() -> None:
     assert papers[0].source_metadata["journal_ref"]["verified"] is False
 
 
+def test_arxiv_discovery_respects_per_venue_budget() -> None:
+    def response(arxiv_id: str) -> HttpResponse:
+        return HttpResponse(
+            url="https://export.arxiv.org/api/query",
+            final_url="https://export.arxiv.org/api/query",
+            status=200,
+            headers={},
+            body=(
+                '<feed xmlns="http://www.w3.org/2005/Atom">'
+                f"<entry><id>https://arxiv.org/abs/{arxiv_id}</id>"
+                f"<title>Paper {arxiv_id}</title><summary>Abstract {arxiv_id}</summary>"
+                "<author><name>Alice Example</name></author>"
+                "<published>2026-01-02T00:00:00Z</published>"
+                "<updated>2026-01-03T00:00:00Z</updated></entry></feed>"
+            ).encode(),
+        )
+
+    class Client:
+        def __init__(self) -> None:
+            self.responses = [response("2601.12345"), response("2601.12346")]
+            self.calls: list[str] = []
+
+        def get(self, url: str, **_kwargs) -> HttpResponse:
+            self.calls.append(url)
+            return self.responses.pop(0)
+
+    client = Client()
+    result = ArxivSource(client).discover_result(SearchPlan(
+        queries=["ti:first", "ti:second"],
+        sources=["arxiv"],
+        max_results_per_query=50,
+        max_results_per_venue=1,
+        openreview_venues=[],
+        crossref_venues=[],
+    ))
+
+    assert len(result.papers) == 1
+    assert len(client.calls) == 1
+    assert "max_results=1" in client.calls[0]
+    assert result.reports[0]["requests_attempted"] == 1
+    assert result.reports[0]["truncated"] is True
+    assert result.reports[0]["budget_exhausted"] is True
+
+
 def test_arxiv_needs_exact_title_first_author_and_author_similarity_without_doi() -> None:
     arxiv = _paper(
         paper_id="arxiv:2601.12345", source="arxiv", source_id="2601.12345",
@@ -686,7 +730,10 @@ def test_openreview_v2_challenge_uses_fixed_http_recovery_and_keeps_evidence() -
         "https://api2.openreview.net/notes?content.venueid=ICLR.cc%2F2025%2FConference"
         "&limit=1&details=replies"
     )
-    assert recovery.calls[0][1]["allowed_hosts"] == {"api2.openreview.net"}
+    assert recovery.calls[0][1]["allowed_hosts"] == {
+        "api2.openreview.net",
+        "openreview.net",
+    }
 
 
 @pytest.mark.parametrize("message", ["Forbidden", "authentication required"])
@@ -757,6 +804,36 @@ def test_openreview_v2_http_recovery_failure_preserves_challenge_error(body: byt
     assert [item["endpoint"] for item in errors] == ["v2", "v2_http_recovery"]
     assert errors[0]["stage"] == "challenge"
     assert errors[0]["http_status"] == 403
+
+
+def test_openreview_v2_html_challenge_recovery_stays_visible() -> None:
+    class ChallengeError(Exception):
+        code = 403
+
+    class V2:
+        def get_notes(self, **_kwargs):
+            raise ChallengeError("Challenge verification required")
+
+    class Factory:
+        def get(self, _version: str):
+            return V2()
+
+    class RecoveryClient:
+        def get(self, url, **_kwargs):
+            return HttpResponse(
+                url=url,
+                final_url="https://openreview.net/challenge",
+                status=200,
+                headers={"content-type": "text/html"},
+                body=b"<html>challenge</html>",
+            )
+
+    source = OpenReviewSource(Factory(), http_client=RecoveryClient())
+    with pytest.raises(ChallengeError):
+        source.probe("ICLR.cc/2025/Conference")
+
+    assert source.errors[-1]["endpoint"] == "v2_http_recovery"
+    assert source.errors[-1]["stage"] == "challenge"
 
 
 def test_materialization_enforces_the_five_paper_track_limit(monkeypatch, tmp_path) -> None:

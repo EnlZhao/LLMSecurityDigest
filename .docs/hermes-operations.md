@@ -90,6 +90,13 @@ container titles. The formal tier is routed to deterministic adapters in
   access is attempted when they are absent. Login, MFA, challenge, and
   authorization failures remain visible in the source report with their
   request stage and error type.
+  An explicit `ChallengeRequiredError` may redirect the bounded recovery
+  browser only between `api2.openreview.net` and the official
+  `openreview.net/challenge` page. The transport does not solve a Turnstile
+  challenge, impersonate a user, or inject credentials. If that page returns
+  HTML rather than notes JSON, the report remains `stage: challenge`; use a
+  legitimately configured OpenReview account or a different permitted Linux
+  runner, then retry the official v2 client.
   Legacy v1 root notes that omit `content.venueid` may use only the already
   registered venue requested by the baseline query. During direct identity
   refresh, the only alternative is a unique registry match for the complete
