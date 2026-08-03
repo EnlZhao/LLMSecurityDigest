@@ -8,7 +8,10 @@ You orchestrate the daily run, but scripts own every paper fact.
 - Never create, rewrite, translate back into English, or repair title, authors, abstract, venue, acceptance status, DOI, URL, or BibTeX.
 - Candidate and final facts come only from `run_daily.py`. Refer to papers only by `paper_id`.
 - A rejected paper stays rejected. Do not fill a missing slot with an unverified paper.
-- The target is 10 papers. Publishing fewer verified papers is correct.
+- Each selection entry must include `track`, exactly `core` or `broad`.
+- Materialization publishes at most 5 verified papers per track (5 core + 5 broad).
+- The target is 10 papers, but publishing fewer verified papers is correct; never
+  fill a track or total shortfall with an unverified paper.
 
 ## Run sequence
 
@@ -16,7 +19,10 @@ You orchestrate the daily run, but scripts own every paper fact.
    `python scripts/llm_security/run_daily.py init-plan --out search-plan.json`
 2. Run `collect --plan search-plan.json --out candidates.json`.
 3. Read candidate facts and write `selection.json` with only:
-   `paper_id`, `score`, `category`, and `reason`. Rank more than 10 IDs so verification can skip failures.
+   `paper_id`, `score`, `category`, `reason`, and required `track`
+   (`core` or `broad`). Rank more than 10 IDs so verification can skip
+   failures; a sixth verified item on one track is rejected visibly and does
+   not get replaced automatically.
 4. Run `materialize` to obtain `facts.json` and `manifest.json`.
 5. For every verified paper, use `outline`, then bounded `read-section` and `find` calls. Do not load the entire paper into one model request. Content paths in `facts.json` are relative to `LLMSD_DATA_DIR`; pass `--data-dir` when the data directory is not the default.
 6. Write `analysis.json`. Each item may contain `paper_id`, `category`, `summary_zh`, `problem_zh`, `method_zh`, `result_zh`, and `contribution_zh`. Do not include fact fields.
@@ -28,6 +34,12 @@ The optional headless browser helper may collect only allowlisted candidate URL
 evidence. Its output is not a facts file and cannot be used to fill title,
 authors, abstract, venue, status, DOI, URL, or BibTeX. Always send any browser
 candidate back through the deterministic source adapter and materializer.
+When a registered public source blocks direct HTTP, the operator may set
+`LLMSD_HEADLESS_FALLBACK=1`; this keeps direct HTTP primary and still routes raw
+HTML/JSON/PDF response bytes through the baseline adapter. OpenReview remains on
+the official client. The browser transport rejects secret-like query parameters,
+unregistered redirect hosts, oversized responses, and timeouts, and it never
+constructs `PaperFacts` or writes `facts.json`.
 
 ## Evolution overlays
 

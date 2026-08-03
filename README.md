@@ -16,7 +16,7 @@ MiniMax/Hermes 只负责搜索策略、关键词、过滤、排序、分类和�
 
 | 来源 | 用途 | 是否需要 Key |
 | --- | --- | --- |
-| 官方 proceedings adapters | USENIX、NDSS、ACL/EMNLP、PMLR/ICML、NeurIPS、AAAI、IJCAI | 否 |
+| 官方 proceedings adapters | USENIX、NDSS、ACL/EMNLP、PMLR/ICML、NeurIPS、CVF/CVPR/ECCV、AAAI、IJCAI | 否 |
 | OpenReview API v2/v1-compatible | ICLR、NeurIPS、ICML 等投稿、venue 与 decision replies | 否 |
 | arXiv Atom API | 广泛发现、预印本元数据与正式记录 reconciliation | 否 |
 | Crossref REST + DOI content negotiation | IEEE/ACM 注册 venue 的 DOI 元数据与官方 BibTeX | 否，建议配置联系邮箱 |
@@ -49,8 +49,8 @@ path still exists.
 
 本地放在 `.env`；GitHub Actions 使用同名 Secret。`.env` 和 `.data/` 均不会提交。
 
-无 key 的正式来源会先运行：注册 proceedings 页面、公开 OpenReview
-notes、arXiv Atom 和 Crossref。OpenReview v2 使用
+无 key 的正式来源会先运行：注册 proceedings 页面、CVF Open Access、
+公开 OpenReview notes、arXiv Atom 和 Crossref。OpenReview v2 使用
 `https://api2.openreview.net` 的分页 notes/decision 查询，旧 venue 使用
 `https://api.openreview.net` 的 v1-compatible client；只认 assigned venue
 和 decision reply，不能凭页面上出现的 “accepted” 字样升级状态。arXiv
@@ -68,10 +68,16 @@ ISSN/container 查询，DOI BibTeX 通过
 
 ## 每日流程
 
+Hermes 的 `selection.json` 每项必须包含非事实字段
+`paper_id`、`score`、`category`、`reason` 和 `track`；
+`track` 只能是 `core` 或 `broad`。每天每轨最多发布 5 篇，目标最多
+10 篇；验证失败或配额超出时保留可见拒绝记录，允许少于 10 篇，不自动凑数。
+
 ```bash
 python scripts/llm_security/run_daily.py init-plan --out RUN/search-plan.json
 python scripts/llm_security/run_daily.py collect --plan RUN/search-plan.json --out RUN/candidates.json
-# Hermes 只输出 paper_id、score、category、reason 到 selection.json
+# Hermes 只输出 paper_id、score、category、reason、track 到 selection.json；
+# track 必须是 core 或 broad，每轨最多发布 5 篇，失败或超额不凑数
 python scripts/llm_security/run_daily.py materialize \
   --candidates RUN/candidates.json --selection RUN/selection.json \
   --facts RUN/facts.json --manifest RUN/manifest.json
@@ -124,6 +130,16 @@ unresolved/shortlisted 候选并上传独立 `scholar-enrichment.json`；它不�
 URL 的标题、短文本和相对链接 evidence，最多十个 URL，明确写入
 `facts_written: false`；它不能访问 secret、构造 `PaperFacts` 或写入
 `facts.json`。所有候选必须重新进入确定性的官方 adapter/materializer。
+直接 HTTP 被注册来源返回 403/429/5xx 或网络超时时，可显式设置
+`LLMSD_HEADLESS_FALLBACK=1` 启用可选的 Playwright raw-response fallback：
+浏览器只访问显式 allowlisted HTTPS host，校验每次 redirect，限制总超时和
+响应字节，并返回原始 HTML/JSON/PDF bytes、最终 URL、状态和 SHA-256
+provenance。默认仍关闭，OpenReview 仍只走官方 client；浏览器 bytes 会重新
+交给现有 deterministic adapter/parser/validator，永远不会直接生成
+`PaperFacts` 或 `facts.json`。独立导出 raw artifact 可使用：
+`python scripts/llm_security/headless_discover.py --raw --input RUN/browser-request.json --out RUN/browser-raw.json`。
+`paper-search-mcp` may be used only as a discovery/reference pattern; it is
+never a fact authority for title, authors, abstract, venue, URLs, or BibTeX.
 
 若某个出口（当前本地 OpenReview API 返回 403）不可达，错误会保存在 `source_reports`，可用的 arXiv 候选仍会继续处理；这不是事实兜底，只有重新从权威源获取并通过身份校验的记录才能进入 `facts.json`。
 

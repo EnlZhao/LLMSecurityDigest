@@ -30,6 +30,7 @@ from .official import (
     ADAPTERS,
     AAAIOJSAdapter,
     ACLAnthologyAdapter,
+    CVFAdapter,
     IJCAIAdapter,
     NDSSAdapter,
     NeurIPSAdapter,
@@ -64,6 +65,8 @@ _OFFICIAL_SOURCE_SPECS = {
     "ijcai": "ijcai",
     "usenix": "usenix-security",
     "ndss": "ndss",
+    "cvpr": "cvpr",
+    "eccv": "eccv",
 }
 _SOURCE_HOSTS = {
     "acl": frozenset({"aclanthology.org"}),
@@ -74,6 +77,8 @@ _SOURCE_HOSTS = {
     "ijcai": frozenset({"www.ijcai.org"}),
     "usenix": frozenset({"www.usenix.org"}),
     "ndss": frozenset({"www.ndss-symposium.org"}),
+    "cvpr": frozenset({"openaccess.thecvf.com"}),
+    "eccv": frozenset({"openaccess.thecvf.com"}),
 }
 _DOI_RE = re.compile(r"^10\.\d{4,9}/[-._;()/:A-Z0-9]+$", re.IGNORECASE)
 
@@ -110,13 +115,19 @@ def _strip_markup(value: str) -> str:
 
 
 def _provenance(response: HttpResponse, *, source: str) -> dict[str, Any]:
-    return {
+    provenance = {
         "source": source,
         "source_url": response.url,
+        "final_url": response.final_url,
+        "transport": response.transport,
+        "redirect_chain": list(response.redirect_chain),
         "fetched_at": utc_now(),
         "response_sha256": response.sha256,
         "extractor_version": "1",
     }
+    if response.provenance:
+        provenance["transport_provenance"] = dict(response.provenance)
+    return provenance
 
 
 def platform_links(*, title: str, landing_url: str, doi: str | None = None, arxiv_id: str | None = None) -> dict[str, str]:
@@ -204,6 +215,13 @@ def official_route_for_paper(paper: PaperFacts) -> tuple[str, str, frozenset[str
         if year is None:
             raise ValueError("NDSS source id requires a bounded symposium year")
         url = f"https://www.ndss-symposium.org/ndss{year}/ndss-paper/{source_id}/"
+    elif source in {"cvpr", "eccv"}:
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,240}", source_id):
+            raise ValueError("invalid CVF source id")
+        year = _paper_year_hint(paper)
+        if year is None:
+            raise ValueError("CVF source id requires a bounded proceedings year")
+        url = f"https://openaccess.thecvf.com/content/{source.upper()}{year}/html/{source_id}.html"
     else:  # pragma: no cover - source map is exhaustive by construction.
         raise ValueError(f"unsupported official source: {paper.source!r}")
     return spec_key, url, hosts
@@ -1748,6 +1766,9 @@ class GoogleScholarEnricher:
                 "matched_count": len(matches),
                 "fetched_at": utc_now(),
                 "source_url": response.url,
+                "final_url": response.final_url,
+                "transport": response.transport,
+                "redirect_chain": list(response.redirect_chain),
                 "response_sha256": response.sha256,
             }
         result = matches[0]
@@ -1766,5 +1787,8 @@ class GoogleScholarEnricher:
             "cited_by_url": _text(cited_by.get("link")) or None,
             "fetched_at": utc_now(),
             "source_url": response.url,
+            "final_url": response.final_url,
+            "transport": response.transport,
+            "redirect_chain": list(response.redirect_chain),
             "response_sha256": response.sha256,
         }

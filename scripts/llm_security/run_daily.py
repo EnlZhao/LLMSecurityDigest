@@ -37,7 +37,7 @@ DEFAULT_PLAN = {
     "crossref_venues": ["ieee-sp", "acm-ccs", "tdsc", "tifs", "tops"],
     "venue_groups": [
         "usenix-security", "ieee-sp", "acm-ccs", "ndss", "iclr", "neurips",
-        "icml", "acl", "emnlp", "aaai", "ijcai", "tdsc", "tifs", "tops",
+        "icml", "cvpr", "eccv", "acl", "emnlp", "aaai", "ijcai", "tdsc", "tifs", "tops",
     ],
 }
 

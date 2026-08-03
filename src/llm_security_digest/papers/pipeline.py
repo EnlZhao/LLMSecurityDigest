@@ -27,7 +27,15 @@ from .sources import (
 def default_client() -> HttpClient:
     email = os.getenv("LLMSD_CONTACT_EMAIL", "").strip()
     suffix = f" ({email})" if email else ""
-    return HttpClient(user_agent=f"LLMSecurityDigest/2.0{suffix}")
+    fallback = None
+    if os.getenv("LLMSD_HEADLESS_FALLBACK", "").strip().casefold() in {"1", "true", "yes", "on"}:
+        # Keep Playwright optional and lazy.  Direct urllib remains the first
+        # transport; the browser is consulted only for blocked registered
+        # hosts, and OpenReview continues through its official client.
+        from .headless import HeadlessResponseTransport
+
+        fallback = HeadlessResponseTransport()
+    return HttpClient(user_agent=f"LLMSecurityDigest/2.0{suffix}", fallback_transport=fallback)
 
 
 def _error_message(exc: Exception, *, limit: int = 400) -> str:
@@ -382,6 +390,8 @@ def _bibtex_source_url(paper: PaperFacts) -> str | None:
         "usenix": {"www.usenix.org"},
         "ndss": {"www.ndss-symposium.org"},
         "aaai_ojs": {"ojs.aaai.org"},
+        "cvpr": {"openaccess.thecvf.com"},
+        "eccv": {"openaccess.thecvf.com"},
     }.get(source, set())
     if isinstance(value, str) and value.startswith("https://") and trusted_hosts:
         parsed = parse.urlsplit(value)
@@ -409,6 +419,8 @@ def _bibtex_hosts(paper: PaperFacts) -> frozenset[str] | None:
         "emnlp": frozenset({"aclanthology.org"}),
         "pmlr": frozenset({"proceedings.mlr.press"}),
         "ijcai": frozenset({"www.ijcai.org"}),
+        "cvpr": frozenset({"openaccess.thecvf.com"}),
+        "eccv": frozenset({"openaccess.thecvf.com"}),
     }.get(str(paper.source or "").casefold())
 
 
@@ -466,6 +478,9 @@ def fetch_bibtex(paper: PaperFacts, *, client: HttpClient) -> tuple[str, str, di
     provenance = {
         "source": "authoritative_bibtex_endpoint",
         "source_url": url,
+        "final_url": response.final_url,
+        "transport": response.transport,
+        "redirect_chain": list(response.redirect_chain),
         "fetched_at": utc_now(),
         "response_sha256": response.sha256,
         "extractor_version": "1",
@@ -514,6 +529,7 @@ def fetch_fulltext(paper: PaperFacts, *, client: HttpClient, data_dir: Path, max
 _CANDIDATE_SOURCES = frozenset({
     "arxiv", "openreview", "crossref", "ieee_xplore",
     "acl", "emnlp", "pmlr", "neurips", "aaai_ojs", "ijcai", "usenix", "ndss",
+    "cvpr", "eccv",
 })
 
 
@@ -555,7 +571,7 @@ def refresh_authoritative(paper: PaperFacts, *, client: HttpClient) -> PaperFact
         refreshed = CrossrefSource(client).fetch_by_doi(paper.doi)
     elif paper.source == "ieee_xplore" and paper.doi:
         refreshed = IeeeXploreSource(client).fetch_by_doi(paper.doi)
-    elif paper.source in {"acl", "emnlp", "pmlr", "neurips", "aaai_ojs", "ijcai", "usenix", "ndss"}:
+    elif paper.source in {"acl", "emnlp", "pmlr", "neurips", "aaai_ojs", "ijcai", "usenix", "ndss", "cvpr", "eccv"}:
         # OfficialSource derives the detail URL from the baseline source/id
         # grammar. Candidate venue metadata and landing URLs are not routing
         # inputs.
@@ -583,8 +599,8 @@ def materialize(
     client: HttpClient | None = None,
     max_pdf_bytes: int = 25 * 1024 * 1024,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    if type(target) is not int or not 1 <= target <= 50:
-        raise ValueError("target must be between 1 and 50")
+    if type(target) is not int or not 1 <= target <= 10:
+        raise ValueError("target must be between 1 and 10")
     if type(scholar_limit) is not int or not 0 <= scholar_limit <= 100:
         raise ValueError("scholar_limit must be between 0 and 100")
     client = client or default_client()
@@ -604,6 +620,7 @@ def materialize(
     decisions: dict[str, dict[str, Any]] = {}
     rejected: list[dict[str, Any]] = []
     scholar_calls = 0
+    track_counts = {"core": 0, "broad": 0}
     # Preserve Hermes ranking within each tier, but always spend the first
     # verification attempts on formal/canonical records. Fallback preprints
     # are considered only after formal attempts have produced a shortfall.
@@ -618,6 +635,9 @@ def materialize(
     for selection in [*formal_selections, *fallback_selections]:
         if len(verified) >= target:
             break
+        if type(selection.track) is not str or selection.track not in track_counts:
+            rejected.append({"paper_id": selection.paper_id, "reason": "invalid_track"})
+            continue
         paper = candidates.get(selection.paper_id)
         if paper is None:
             rejected.append({"paper_id": selection.paper_id, "reason": "unknown_paper_id"})
@@ -627,6 +647,14 @@ def materialize(
                 "paper_id": paper.paper_id,
                 "reason": "unresolved_evidence",
                 "evidence": paper.unresolved_evidence,
+            })
+            continue
+        if track_counts[selection.track] >= 5:
+            rejected.append({
+                "paper_id": paper.paper_id,
+                "reason": "track_quota_exceeded",
+                "track": selection.track,
+                "limit": 5,
             })
             continue
         try:
@@ -654,6 +682,7 @@ def materialize(
                     }
                 scholar_calls += 1
             verified.append(paper)
+            track_counts[selection.track] += 1
             decisions[paper.paper_id] = asdict(selection)
         except Exception as exc:
             rejected.append({
@@ -684,6 +713,8 @@ def materialize(
             "formal": sum(paper.source != "arxiv" or paper.collection_tier == "formal" for paper in verified),
             "arxiv_fallback": sum(paper.source == "arxiv" and paper.match_state == "unmatched" for paper in verified),
             "unresolved_rejected": sum(item.get("reason") == "unresolved_evidence" for item in rejected),
+            "track_counts": dict(track_counts),
+            "track_limits": {"core": 5, "broad": 5},
         },
     }
     return facts, manifest

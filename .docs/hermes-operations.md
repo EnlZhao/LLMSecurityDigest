@@ -23,8 +23,13 @@ The daily job always follows this order:
 7. Render offline from the frozen facts, then write the daily reflection and
    propose an evolution candidate for a later run.
 
-The target is a maximum, not a quota. A source failure or an unverified paper
-must remain visible in `source_reports`; it is never replaced by an LLM guess.
+The target is a maximum, not a quota. Selection entries must include the
+non-fact `track` value `core` or `broad`. Materialization publishes at
+most five verified records per track (five core plus five broad); a sixth
+verified record on a full track is rejected with a visible
+`track_quota_exceeded` reason. A source failure, quota rejection, or
+unverified paper must remain visible, and no shortfall is filled by an LLM
+guess or an automatic substitute.
 
 ## Sources and adapters
 
@@ -36,6 +41,10 @@ container titles. The formal tier is routed to deterministic adapters in
 - USENIX Security and NDSS use their proceedings pages and citation metadata.
 - ACL/EMNLP use ACL Anthology.
 - ICML uses PMLR; NeurIPS uses the NeurIPS proceedings pages.
+- CVPR/ECCV use CVF Open Access pages at `openaccess.thecvf.com`; the adapter
+  collects detail links from `{CVPR,ECCV}<year>?day=all` and accepts only
+  citation metadata, official landing/PDF URLs, DOI metadata, and official
+  BibTeX links or inline BibTeX.
 - AAAI uses the OJS archive; IJCAI uses its proceedings pages.
 - IEEE/ACM venue groups use registered Crossref queries with ISSN/container
   filtering, followed by DOI content negotiation for BibTeX. IEEE venues also
@@ -114,6 +123,10 @@ installed as an unreviewed fact provider. The useful patterns are:
   still need to be built. It is not used as a fact provider. The deterministic
   adapter uses the registered official proceedings host and parses HTML by
   code, never by an LLM.
+- `paper-search-mcp` is a discovery/reference pattern only. It may inform
+  where a deterministic adapter should look, but it cannot provide or correct
+  paper facts. CVPR/ECCV facts come only from CVF Open Access responses that
+  pass the baseline parser and validation.
 - [`sophia-jihye/IEEE_Xplore_API_Python`](https://github.com/sophia-jihye/IEEE_Xplore_API_Python)
   is an API usage example, not an authority by itself. IEEE Xplore requires
   `IEEE_XPLORE_API_KEY`; the adapter is optional and emits an explicit auth
@@ -254,8 +267,8 @@ credential. The GitHub collector workflow exposes the two variables as
 optional secret-backed environment values; unset secrets do not make the job
 pretend that OpenReview succeeded.
 
-Hermes writes a selection containing only `paper_id`, `score`, `category`, and
-`reason`, then runs:
+Hermes writes a selection containing only `paper_id`, `score`, `category`,
+`reason`, and required `track` (`core` or `broad`), then runs:
 
 ```bash
 python scripts/llm_security/run_daily.py materialize \
@@ -310,6 +323,24 @@ links, and a short text excerpt) with `facts_written: false`; credentials,
 arbitrary browser code, `PaperFacts`, and `facts.json` are inaccessible to the
 browser layer. Treat the evidence only as a candidate URL hint and route the
 paper through the normal deterministic adapter and materializer.
+
+When direct HTTP is blocked by a registered source, the collector can opt in to
+the raw-response transport with `LLMSD_HEADLESS_FALLBACK=1`. Direct HTTP remains
+primary; OpenReview always remains on the official OpenReview client. The
+fallback uses a fresh Playwright context with no cookies or secret headers,
+allows only registered HTTPS hosts (including every redirect), and enforces a
+60-second request ceiling plus the configured response-byte bound. It returns
+raw HTML/JSON/PDF bytes, status, final URL, redirect chain, and SHA-256
+provenance to the same deterministic adapters; it cannot construct
+`PaperFacts` or write `facts.json`. To export a bounded raw artifact manually:
+
+```bash
+python scripts/llm_security/headless_discover.py --raw \
+  --input RUN/browser-request.json --out RUN/browser-raw.json
+```
+
+Secret-like query parameters are rejected rather than passed to the browser.
+Direct and fallback failures remain visible in the source report.
 
 ## Hermes reflection and evolution
 

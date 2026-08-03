@@ -23,11 +23,20 @@ from llm_security_digest.papers.headless import HeadlessDiscovery, HeadlessDisco
 def main() -> int:
     parser = argparse.ArgumentParser(description="collect allowlisted headless browser evidence")
     parser.add_argument("--input", type=Path, required=True, help="JSON request containing only allowlisted URLs")
-    parser.add_argument("--out", type=Path, required=True, help="evidence JSON output path")
+    parser.add_argument("--out", type=Path, required=True, help="evidence/raw-response JSON output path")
+    parser.add_argument(
+        "--raw",
+        action="store_true",
+        help="capture bounded raw HTML/JSON/PDF response bytes and provenance",
+    )
     args = parser.parse_args()
+    if args.out.name.casefold() == "facts.json":
+        print("headless output path cannot be facts.json", file=sys.stderr)
+        return 2
     try:
         request = json.loads(args.input.read_text(encoding="utf-8"))
-        result = HeadlessDiscovery().collect(request)
+        discovery = HeadlessDiscovery()
+        result = discovery.collect_raw(request) if args.raw else discovery.collect(request)
     except (OSError, ValueError, json.JSONDecodeError, HeadlessDiscoveryError) as exc:
         result = {
             "schema_version": 1,

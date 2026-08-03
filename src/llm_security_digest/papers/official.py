@@ -27,6 +27,8 @@ _OFFICIAL_PDF_HOSTS = {
     "ijcai": frozenset({"www.ijcai.org"}),
     "usenix-security": frozenset({"www.usenix.org"}),
     "ndss": frozenset({"www.ndss-symposium.org"}),
+    "cvpr": frozenset({"openaccess.thecvf.com"}),
+    "eccv": frozenset({"openaccess.thecvf.com"}),
 }
 
 
@@ -241,6 +243,9 @@ def _source_provenance(response: HttpResponse | None, adapter: str) -> dict[str,
     return {
         "source": adapter,
         "source_url": response.url if response else None,
+        "final_url": response.final_url if response else None,
+        "transport": response.transport if response else None,
+        "redirect_chain": list(response.redirect_chain) if response else [],
         "fetched_at": utc_now(),
         "response_sha256": response.sha256 if response else None,
         "extractor_version": "official-1",
@@ -633,7 +638,7 @@ class PMLRAdapter(OfficialAdapter):
 
 
 def self_adapter(spec: VenueSpec, fallback: str) -> str:
-    return spec.key if spec.key in {"acl", "emnlp"} else fallback
+    return spec.key if spec.key in {"acl", "emnlp", "cvpr", "eccv"} else fallback
 
 
 def parse_official_detail(
@@ -665,10 +670,21 @@ def parse_official_detail(
                 year = re.search(r"/(?:19|20)\d{2}/", url)
                 year_text = year.group(0).strip("/") if year else str(fallback_year or "")
                 pdf = f"https://www.ijcai.org/proceedings/{year_text}/{int(match.group(1)):04d}.pdf"
+    date_fallback = None if spec.adapter == "cvf" else fallback_year
     published = next(
-        (_iso_date(value, fallback_year) for name in ("citation_publication_date", "citation_date", "DC.Date.issued") for value in _meta(root, name) if _iso_date(value, fallback_year)),
-        _iso_date("", fallback_year),
+        (_iso_date(value, date_fallback) for name in ("citation_publication_date", "citation_date", "DC.Date.issued") for value in _meta(root, name) if _iso_date(value, date_fallback)),
+        _iso_date("", date_fallback),
     )
+    if spec.adapter == "cvf" and not published:
+        return ParsedRecord(incomplete=_incomplete(
+            spec,
+            adapter=adapter_name,
+            source_id=source_id,
+            landing_url=url,
+            reason="required_official_field_missing",
+            missing=("published_at",),
+            partial={"title": _clean(title), "authors": authors, "abstract": _clean(abstract)},
+        ))
     source_metadata: dict[str, Any] = {"refreshed_from_detail": True}
     explicit_bibtex_url = _bibtex_url(root, url)
     if explicit_bibtex_url:
@@ -748,6 +764,125 @@ class NeurIPSAdapter(OfficialAdapter):
                 response = self._get(index_url)
                 fetched += 1
                 paper_urls = self.paper_urls(response.text(), year=year)
+            except Exception as exc:
+                errors.append(self._error(index_url, exc))
+                continue
+            for paper_url in paper_urls:
+                if len(papers) >= plan.max_results_per_venue:
+                    break
+                urls.append(paper_url)
+                try:
+                    response = self._get(paper_url)
+                    fetched += 1
+                    parsed = self.parse_paper(response.text(), spec=spec, url=paper_url, year=year, response=response)
+                    if parsed.paper:
+                        papers.append(parsed.paper)
+                    elif parsed.incomplete:
+                        incomplete.append(parsed.incomplete)
+                except Exception as exc:
+                    incomplete.append(_incomplete(spec, adapter=self.adapter, source_id=_last_path(paper_url), landing_url=paper_url, reason="official_detail_fetch_or_parse_failed", partial={"error_type": type(exc).__name__}))
+        return DiscoveryResult(papers, incomplete, [self._report(spec, years=years, fetched=fetched, parsed=len(papers), incomplete=incomplete, errors=errors, urls=urls, truncated=len(papers) >= plan.max_results_per_venue)])
+
+
+class CVFAdapter(OfficialAdapter):
+    adapter = "cvf"
+
+    @staticmethod
+    def proceedings_code(spec: VenueSpec, year: int) -> str:
+        return f"{spec.key.upper()}{int(year)}"
+
+    @classmethod
+    def index_url(cls, spec: VenueSpec, year: int) -> str:
+        return f"https://openaccess.thecvf.com/{cls.proceedings_code(spec, year)}?day=all"
+
+    @classmethod
+    def source_id_from_url(cls, url: str, *, spec: VenueSpec, year: int) -> str:
+        code = cls.proceedings_code(spec, year)
+        path = urlparse(url).path
+        match = re.search(rf"/content/{re.escape(code)}/html/([^/]+)\.html$", path, flags=re.IGNORECASE)
+        return match.group(1) if match else _last_path(url).removesuffix(".html")
+
+    @classmethod
+    def paper_urls(cls, html_text: str, *, spec: VenueSpec, year: int) -> list[str]:
+        code = cls.proceedings_code(spec, year)
+        pattern = re.compile(rf"/content/{re.escape(code)}/html/[^/]+\.html$", re.IGNORECASE)
+        base_url = "https://openaccess.thecvf.com"
+        urls: set[str] = set()
+        for _, href in _hrefs(_tree(html_text)):
+            absolute = _absolute(href.split("#", 1)[0], base_url)
+            parsed = urlparse(absolute)
+            host = parsed.hostname.casefold().rstrip(".") if parsed.hostname else ""
+            if parsed.scheme.casefold() != "https" or host != "openaccess.thecvf.com":
+                continue
+            if pattern.search(parsed.path):
+                urls.add(absolute)
+        return sorted(urls)
+
+    @classmethod
+    def parse_paper(
+        cls,
+        html_text: str,
+        *,
+        spec: VenueSpec,
+        url: str,
+        year: int,
+        response: HttpResponse | None = None,
+    ) -> ParsedRecord:
+        root = _tree(html_text)
+        title = (_meta(root, "citation_title") or [_clean((_first(root, tag="h1") or _Node()).text())])[0]
+        authors = _authors(root)
+        abstract = _abstract(root)
+        pdf = _pdf_url(root, url)
+        source_metadata: dict[str, Any] = {"proceedings_year": year, "proceedings": cls.proceedings_code(spec, year)}
+        bibtex_url = _bibtex_url(root, url)
+        bibtex_inline = _bibtex_inline(root)
+        if bibtex_url:
+            source_metadata["bibtex_url"] = bibtex_url
+        if bibtex_inline:
+            source_metadata["bibtex_inline"] = bibtex_inline
+        published = next(
+            (_iso_date(value, None) for name in ("citation_publication_date", "citation_date", "DC.Date.issued") for value in _meta(root, name) if _iso_date(value, None)),
+            None,
+        )
+        if not published:
+            return ParsedRecord(incomplete=_incomplete(
+                spec,
+                adapter=self.adapter,
+                source_id=cls.source_id_from_url(url, spec=spec, year=year),
+                landing_url=url,
+                reason="required_official_field_missing",
+                missing=("published_at",),
+                partial={"title": _clean(title), "authors": authors, "abstract": _clean(abstract)},
+            ))
+        return _make_paper(
+            spec=spec,
+            adapter=self_adapter(spec, "cvf"),
+            source_id=cls.source_id_from_url(url, spec=spec, year=year),
+            title=title,
+            authors=authors,
+            abstract=abstract,
+            published_at=published,
+            landing_url=url,
+            pdf_url=pdf,
+            doi=_doi(root),
+            response=response,
+            source_metadata=source_metadata,
+        )
+
+    def discover(self, plan: SearchPlan, spec: VenueSpec) -> DiscoveryResult:
+        years = _years_for_plan(plan)
+        papers: list[PaperFacts] = []
+        incomplete: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+        urls: list[str] = []
+        fetched = 0
+        for year in years:
+            index_url = self.index_url(spec, year)
+            urls.append(index_url)
+            try:
+                response = self._get(index_url)
+                fetched += 1
+                paper_urls = self.paper_urls(response.text(), spec=spec, year=year)
             except Exception as exc:
                 errors.append(self._error(index_url, exc))
                 continue
@@ -1156,6 +1291,7 @@ ADAPTERS: dict[str, type[OfficialAdapter]] = {
     "acl_anthology": ACLAnthologyAdapter,
     "pmlr": PMLRAdapter,
     "neurips": NeurIPSAdapter,
+    "cvf": CVFAdapter,
     "aaai_ojs": AAAIOJSAdapter,
     "ijcai": IJCAIAdapter,
     "usenix": USENIXAdapter,

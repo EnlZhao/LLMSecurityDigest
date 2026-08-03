@@ -7,7 +7,7 @@ import time
 import zlib
 from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
-from typing import Iterable
+from typing import Any, Iterable
 from urllib import error, parse, request
 
 
@@ -26,11 +26,41 @@ def _safe_url(url: str, provenance_url: str | None = None) -> str:
     return parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "&".join(safe_query), parsed.fragment))
 
 
+def _query_has_secret(url: str) -> bool:
+    try:
+        pairs = parse.parse_qsl(parse.urlsplit(url).query, keep_blank_values=True)
+    except ValueError:
+        return True
+    markers = ("key", "api_key", "apikey", "access_token", "token", "secret", "password", "passwd", "authorization", "auth", "credential", "cookie", "session")
+    for key, _ in pairs:
+        lowered = key.casefold().replace("-", "_")
+        if lowered in markers or lowered.endswith(("_api_key", "_access_token", "_token")):
+            return True
+        if any(lowered.startswith(marker + "_") for marker in markers if marker not in {"token", "auth"}):
+            return True
+        if lowered.startswith(("token_", "auth_")):
+            return True
+    return False
+
+
 class HttpRequestError(RuntimeError):
     def __init__(self, code: int, url: str):
         self.code = code
         self.url = url
         super().__init__(f"HTTP {code} for {url}")
+
+
+class HttpFallbackError(RuntimeError):
+    """Both direct HTTP and the optional browser transport failed."""
+
+    def __init__(self, direct: Exception, fallback: Exception, *, url: str):
+        self.direct_error = direct
+        self.fallback_error = fallback
+        self.code = getattr(direct, "code", 0)
+        self.url = _safe_url(url)
+        direct_text = str(direct).replace(url, self.url)[:180]
+        fallback_text = str(fallback).replace(url, self.url)[:180]
+        super().__init__(f"direct request failed ({direct_text}); headless fallback failed ({fallback_text})")
 
 
 @dataclass(frozen=True)
@@ -39,6 +69,10 @@ class HttpResponse:
     status: int
     headers: dict[str, str]
     body: bytes
+    final_url: str | None = None
+    transport: str = "http"
+    redirect_chain: tuple[str, ...] = ()
+    provenance: dict[str, Any] | None = None
 
     @property
     def sha256(self) -> str:
@@ -106,10 +140,21 @@ class _AllowedRedirectHandler(request.HTTPRedirectHandler):
 
 
 class HttpClient:
-    def __init__(self, *, user_agent: str, retries: int = 3, timeout: int = 30):
+    def __init__(
+        self,
+        *,
+        user_agent: str,
+        retries: int = 3,
+        timeout: int = 30,
+        fallback_transport: Any | None = None,
+        headless_transport: Any | None = None,
+    ):
+        if fallback_transport is not None and headless_transport is not None:
+            raise ValueError("configure only one optional fallback transport")
         self.user_agent = user_agent
         self.retries = retries
         self.timeout = timeout
+        self.fallback_transport = fallback_transport or headless_transport
         self._last_request: dict[str, float] = {}
 
     def get(
@@ -157,17 +202,26 @@ class HttpClient:
                     response_headers = {key.lower(): value for key, value in response.headers.items()}
                     body = self._decode_body(body, response_headers, max_bytes=max_bytes)
                     return HttpResponse(
-                        url=provenance_url or url,
+                        url=_safe_url(url, provenance_url),
                         status=int(getattr(response, "status", 200)),
                         headers=response_headers,
                         body=body,
+                        final_url=_safe_url(response.geturl()),
+                        transport="http",
+                        provenance={
+                            "source_url": _safe_url(url, provenance_url),
+                            "final_url": _safe_url(response.geturl()),
+                            "http_status": int(getattr(response, "status", 200)),
+                            "response_sha256": hashlib.sha256(body).hexdigest(),
+                            "transport": "http",
+                        },
                     )
             except error.HTTPError as exc:
                 # Do not let API credentials escape through a traceback or a
                 # manifest message when a request fails.
                 last_error = HttpRequestError(exc.code, _safe_url(url, provenance_url))
                 if exc.code not in {429, 500, 502, 503, 504} or attempt + 1 >= self.retries:
-                    raise last_error from exc
+                    break
                 wait = self._retry_after(exc.headers.get("Retry-After")) or (attempt + 1) * 3
                 time.sleep(min(wait, 60))
             except (error.URLError, TimeoutError) as exc:
@@ -175,9 +229,57 @@ class HttpClient:
                 # expose only a redacted, bounded diagnostic to callers.
                 last_error = HttpRequestError(0, _safe_url(url, provenance_url))
                 if attempt + 1 >= self.retries:
-                    raise last_error from exc
+                    break
                 time.sleep((attempt + 1) * 2)
-        raise last_error or RuntimeError("request failed")
+        if last_error is None:
+            raise RuntimeError("request failed")
+        if (
+            self.fallback_transport is not None
+            and allowed is not None
+            and last_error.code in {403, 408, 425, 429, 500, 502, 503, 504, 0}
+            and _query_has_secret(url)
+        ):
+            raise HttpFallbackError(
+                last_error,
+                ValueError("headless fallback skipped: secret-like query parameter"),
+                url=url,
+            )
+        if self._can_use_fallback(url, allowed=allowed, direct_error=last_error):
+            try:
+                response = self.fallback_transport.get(
+                    url,
+                    headers=request_headers,
+                    max_bytes=max_bytes,
+                    timeout_ms=max(1_000, min(int(self.timeout * 1_000), 60_000)),
+                    allowed_hosts=allowed,
+                    provenance_url=_safe_url(url, provenance_url),
+                )
+                if not isinstance(response, HttpResponse):
+                    raise TypeError("headless fallback returned an invalid response")
+                return response
+            except Exception as fallback_error:
+                raise HttpFallbackError(last_error, fallback_error, url=url) from fallback_error
+        raise last_error
+
+    def _can_use_fallback(
+        self,
+        url: str,
+        *,
+        allowed: frozenset[str] | None,
+        direct_error: HttpRequestError,
+    ) -> bool:
+        """Only blocked registered requests may use the optional browser."""
+        if self.fallback_transport is None or allowed is None:
+            return False
+        if _query_has_secret(url):
+            return False
+        if direct_error.code not in {403, 408, 425, 429, 500, 502, 503, 504, 0}:
+            return False
+        try:
+            host = _hostname(url)
+        except ValueError:
+            return False
+        return host in allowed
 
     @staticmethod
     def _decode_body(body: bytes, headers: dict[str, str], *, max_bytes: int) -> bytes:

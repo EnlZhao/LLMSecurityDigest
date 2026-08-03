@@ -144,6 +144,14 @@ VENUE_SPECS: tuple[VenueSpec, ...] = (
               ("ICML.cc/2026/Conference", "ICML.cc/2025/Conference", "ICML.cc/2024/Conference"),
               crossref_container_titles=("Proceedings of the International Conference on Machine Learning", "International Conference on Machine Learning", "ICML"),
               source_kinds=("official", "openreview"), adapter="pmlr"),
+    VenueSpec("cvpr", "IEEE/CVF Conference on Computer Vision and Pattern Recognition", ("CVPR",),
+              ("https://openaccess.thecvf.com/",),
+              crossref_container_titles=("Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition", "IEEE/CVF Conference on Computer Vision and Pattern Recognition", "CVPR"),
+              adapter="cvf"),
+    VenueSpec("eccv", "European Conference on Computer Vision", ("ECCV",),
+              ("https://openaccess.thecvf.com/",),
+              crossref_container_titles=("European Conference on Computer Vision", "ECCV"),
+              adapter="cvf"),
     VenueSpec("acl", "Annual Meeting of the Association for Computational Linguistics", ("ACL", "ACL Annual Meeting"),
               ("https://www.aclweb.org/portal/",),
               crossref_container_titles=("Proceedings of the Annual Meeting of the Association for Computational Linguistics", "Annual Meeting of the Association for Computational Linguistics", "ACL"),
@@ -411,7 +419,10 @@ class SearchPlan:
         bounded_ints = (
             ("max_results_per_query", self.max_results_per_query, 1, 1000),
             ("max_results_per_venue", self.max_results_per_venue, 1, 5000),
-            ("target", self.target, 1, 50),
+            # The daily workflow is deliberately bounded to ten published
+            # papers: five core and five broad. Evolution may tune discovery,
+            # but it cannot enlarge this materialization budget.
+            ("target", self.target, 1, 10),
             ("scholar_enrich_limit", self.scholar_enrich_limit, 0, 100),
         )
         for name, value, lower, upper in bounded_ints:
@@ -443,6 +454,7 @@ class SelectionEntry:
     score: float
     category: str
     reason: str
+    track: str
 
     @classmethod
     def load_many(cls, path: Path) -> list["SelectionEntry"]:
@@ -450,7 +462,7 @@ class SelectionEntry:
         values = raw.get("selections") if isinstance(raw, dict) else None
         if not isinstance(values, list):
             raise ValueError("selection must contain a selections array")
-        allowed = {"paper_id", "score", "category", "reason"}
+        allowed = {"paper_id", "score", "category", "reason", "track"}
         entries: list[SelectionEntry] = []
         seen: set[str] = set()
         for index, value in enumerate(values):
@@ -462,11 +474,15 @@ class SelectionEntry:
                 raise ValueError(f"selection {index} contains forbidden fact fields: {sorted(forbidden)}")
             if unknown:
                 raise ValueError(f"selection {index} contains unknown fields: {sorted(unknown)}")
+            track = value.get("track")
+            if type(track) is not str or track not in {"core", "broad"}:
+                raise ValueError(f"selection {index} must contain track 'core' or 'broad'")
             entry = cls(
                 paper_id=str(value.get("paper_id", "")).strip(),
                 score=float(value.get("score", 0)),
                 category=str(value.get("category", "Other")).strip() or "Other",
                 reason=str(value.get("reason", "")).strip(),
+                track=track,
             )
             if not entry.paper_id or entry.paper_id in seen:
                 raise ValueError(f"selection {index} has a missing or duplicate paper_id")
