@@ -22,10 +22,16 @@ Read and follow this contract before doing anything:
 {contract}
 
 Use absolute paths and keep intermediate JSON in {run_dir}. Start by creating a
-search plan, then run the script's collect command. arXiv and OpenReview are the
-primary no-key sources. Rank more than {n} candidate paper_ids. The materialize
+search plan, then run the script's collect command. Official formal venues are
+queried first; arXiv is a preprint/fallback source and journal_ref is only
+unverified evidence. Rank more than {n} candidate paper_ids. The materialize
 command downloads and identity-validates full text and obtains authoritative
 BibTeX. It invokes SerpAPI only for that ranked shortlist, never for discovery.
+
+Hermes may propose strategy-only evolution overlays with `reflect`; it may not
+write facts, HTTP endpoints, credentials, or single-paper title/DOI/date values.
+Run `validate-evolution` and `shadow-evolution` before activation. Activation is
+atomic and takes effect on the next run; rollback is an explicit history event.
 
 For each verified paper, inspect its outline and read bounded sections. Do not
 put an entire paper into one model request. Write analysis.json containing only

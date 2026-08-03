@@ -7,16 +7,19 @@ on:
         description: Exact authoritative paper title to test
         required: true
         type: string
+  workflow_run:
+    workflows: ["Collect paper candidates"]
+    types: [completed]
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   probe:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    env:
-      SERPAPI_API_KEY: ${{ secrets.SERPAPI_API_KEY }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -32,6 +35,7 @@ jobs:
       - name: Query one exact title
         env:
           PAPER_TITLE: ${{ inputs.title }}
+          SERPAPI_API_KEY: ${{ secrets.SERPAPI_API_KEY }}
         run: |
           python - <<'PY'
           import json
@@ -63,3 +67,102 @@ jobs:
               "source_url": result.get("source_url"),
           }, ensure_ascii=False))
           PY
+
+  enrich-candidates:
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Download candidate artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: paper-candidates-${{ github.event.workflow_run.id }}
+          path: ${{ runner.temp }}/llmsd
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Install collector
+        run: python -m pip install .
+
+      - name: Enrich only a bounded unresolved shortlist
+        env:
+          CANDIDATES_PATH: ${{ runner.temp }}/llmsd/candidates.json
+          OUTPUT_PATH: ${{ runner.temp }}/llmsd/scholar-enrichment.json
+          SERPAPI_API_KEY: ${{ secrets.SERPAPI_API_KEY }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from types import SimpleNamespace
+
+          from llm_security_digest.papers.pipeline import default_client
+          from llm_security_digest.papers.sources import GoogleScholarEnricher
+
+          path = os.environ["CANDIDATES_PATH"]
+          # The downloaded artifact is untrusted JSON data. Validate and parse
+          # it only; never execute candidate content or materialize facts here.
+          with open(path, encoding="utf-8") as handle:
+              payload = json.load(handle)
+          if not isinstance(payload, dict) or not isinstance(payload.get("candidates"), list):
+              raise SystemExit("candidate artifact has an invalid schema")
+          candidates = payload["candidates"]
+          if len(candidates) > 1000 or any(
+              not isinstance(item, dict)
+              or not isinstance(item.get("paper_id"), str)
+              or not item.get("paper_id").strip()
+              or not isinstance(item.get("title"), str)
+              or not item.get("title").strip()
+              for item in candidates
+          ):
+              raise SystemExit("candidate artifact contains invalid records")
+          unresolved = [item for item in candidates if item.get("unresolved_evidence")]
+          shortlist = unresolved + [item for item in candidates if item not in unresolved]
+          shortlist = shortlist[:5]
+          enricher = GoogleScholarEnricher(default_client())
+          output = {
+              "schema_version": 1,
+              "status": "unavailable" if not enricher.available else "ok",
+              "limit": 5,
+              "enrichments": [],
+              "facts_written": False,
+          }
+          for item in shortlist:
+              platform_links = item.get("platform_links")
+              if not isinstance(platform_links, dict):
+                  platform_links = {}
+              paper = SimpleNamespace(
+                  title=item["title"],
+                  source=item.get("source"),
+                  source_id=item.get("source_id"),
+                  landing_url=item.get("landing_url"),
+                  doi=item.get("doi"),
+                  platform_links=platform_links,
+              )
+              try:
+                  result = enricher.enrich(paper)
+              except Exception as exc:
+                  # Candidate artifacts and provider errors are untrusted. Do
+                  # not copy exception text, which can contain request URLs.
+                  result = {"status": "error", "error_type": type(exc).__name__}
+              output["enrichments"].append({"paper_id": item.get("paper_id"), "scholar": result})
+          with open(os.environ["OUTPUT_PATH"], "w", encoding="utf-8") as handle:
+              json.dump(output, handle, ensure_ascii=False, indent=2)
+          print(json.dumps({"status": output["status"], "queried": len(output["enrichments"]), "facts_written": False}, ensure_ascii=False))
+          PY
+
+      - name: Upload Scholar enrichment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: scholar-enrichment-${{ github.event.workflow_run.id }}
+          path: ${{ runner.temp }}/llmsd/scholar-enrichment.json
+          if-no-files-found: error
+          retention-days: 7

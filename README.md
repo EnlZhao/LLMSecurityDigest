@@ -1,6 +1,6 @@
-# LLM Security Digest
+# Paper Daily
 
-每天在 headless Linux 服务器上收集最多 10 篇 LLM Security 论文，并生成静态站。数量不足时宁缺毋滥：只有元数据、权威 BibTeX 和下载正文均通过脚本校验的论文才能发布。
+每天在 headless 服务器上收集最多 10 篇 LLM Security 论文，并生成静态站。数量不足时宁缺毋滥：只有元数据、权威 BibTeX 和下载正文均通过脚本校验的论文才能发布。
 
 ## 事实边界
 
@@ -16,17 +16,27 @@ MiniMax/Hermes 只负责搜索策略、关键词、过滤、排序、分类和�
 
 | 来源 | 用途 | 是否需要 Key |
 | --- | --- | --- |
-| arXiv Atom API | 预印本候选与权威元数据 | 否 |
-| OpenReview API | ICLR、NeurIPS、ICML 等录用论文候选 | 否 |
-| Crossref API | DOI/会议论文元数据及 BibTeX | 否，建议配置联系邮箱 |
+| 官方 proceedings adapters | USENIX、NDSS、ACL/EMNLP、PMLR/ICML、NeurIPS、AAAI、IJCAI | 否 |
+| OpenReview API v2/v1-compatible | ICLR、NeurIPS、ICML 等投稿、venue 与 decision replies | 否 |
+| arXiv Atom API | 广泛发现、预印本元数据与正式记录 reconciliation | 否 |
+| Crossref REST + DOI content negotiation | IEEE/ACM 注册 venue 的 DOI 元数据与官方 BibTeX | 否，建议配置联系邮箱 |
+| IEEE Xplore API | IEEE 注册 venue 的补充发现与 DOI 元数据 | 可选 `IEEE_XPLORE_API_KEY` |
+| ACM | 通过 Crossref 查询 CCS/TOPS，不使用未注册私有 API | 否（Crossref 路径） |
 | Google Scholar via SerpAPI | 精确标题匹配、引用数和跳转链接 | `SERPAPI_API_KEY` |
 
-收集顺序固定为“免费官方源候选 -> LLM 仅按 `paper_id` 排序 -> 脚本下载并校验 BibTeX/正文 -> 对入围短名单调用 SerpAPI”。Google Scholar 不作为 title、authors、abstract、venue 或 BibTeX 的权威来源。每篇论文都会生成 Scholar 搜索链接，即使没有配置 SerpAPI。
+收集顺序固定为“注册的顶会顶刊 proceedings/期刊正式源 -> OpenReview accepted
+records -> arXiv 广泛发现并与正式记录严格匹配 -> 正式论文不足时才从未匹配
+arXiv 补位 -> LLM 仅按 `paper_id` 排序 -> 脚本下载并校验 BibTeX/正文 -> 对
+入围短名单调用 SerpAPI”。正式记录优先，未解析证据永不发布。Google Scholar
+不作为 title、authors、abstract、venue 或 BibTeX 的权威来源；每篇论文都会
+生成 Scholar 搜索链接，即使没有配置 SerpAPI。无 key 源失败时，source report
+会保留请求阶段和错误，不以兜底数据掩盖失败。
 
 可选环境变量：
 
 ```bash
 SERPAPI_API_KEY=...
+IEEE_XPLORE_API_KEY=...
 LLMSD_CONTACT_EMAIL=research@example.com
 LLMSD_DATA_DIR=/persistent/path/llmsd-data
 ```
@@ -38,6 +48,23 @@ runner path. Older snapshots with absolute paths remain readable only when that
 path still exists.
 
 本地放在 `.env`；GitHub Actions 使用同名 Secret。`.env` 和 `.data/` 均不会提交。
+
+无 key 的正式来源会先运行：注册 proceedings 页面、公开 OpenReview
+notes、arXiv Atom 和 Crossref。OpenReview v2 使用
+`https://api2.openreview.net` 的分页 notes/decision 查询，旧 venue 使用
+`https://api.openreview.net` 的 v1-compatible client；只认 assigned venue
+和 decision reply，不能凭页面上出现的 “accepted” 字样升级状态。arXiv
+使用 `https://export.arxiv.org/api/query`，脚本按官方建议至少间隔 3 秒，
+BibTeX 由 `https://arxiv.org/bibtex/<id>` 获取；`journal_ref` 只能进入
+待验证证据。Crossref 使用 `https://api.crossref.org/works` 的注册
+ISSN/container 查询，DOI BibTeX 通过
+`Accept: application/x-bibtex` 内容协商获取。IEEE Xplore 的
+`https://ieeexploreapi.ieee.org/api/v1/search/articles` 仅在配置
+`IEEE_XPLORE_API_KEY` 时启用，缺 key 或 API 失败会写入 source report，
+不会由 LLM 或 Scholar 代填。ACM CCS/TOPS 走 Crossref，不依赖 ACM 私有 key。
+
+安装包固定 `openreview-py>=1.46,<2`；headless 服务器执行
+`python -m pip install .` 即可获得 v2 client 与 v1-compatible client。
 
 ## 每日流程
 
@@ -55,11 +82,48 @@ python scripts/llm_security/render_and_push.py \
   --analysis RUN/analysis.json --date YYYY-MM-DD --build-site
 ```
 
+### Hermes evolution
+
+Hermes 只能提出查询、关键词、venue 分组等策略 overlay，不能写入任何论文事实、单篇 title/DOI/date、URL、HTTP 或 secret。每个候选都必须包含根因、泛化模式、机器可验证的 expected metric、counterexamples，以及至少一个 trigger、两个独立 positive 和一个 negative regression fixture；缺 reflection 或单篇详情页 source request 会被拒绝。候选必须经过 validator 和 shadow 后才能原子激活，下一次运行才会读取；每次激活和显式回滚都会写入 history：
+
+```bash
+python scripts/llm_security/run_daily.py reflect --input candidate.json
+python scripts/llm_security/run_daily.py validate-evolution --version CANDIDATE_VERSION
+python scripts/llm_security/run_daily.py shadow-evolution --version CANDIDATE_VERSION
+# Use the report persisted under evolution/shadow/.../report.json by the command above.
+python scripts/llm_security/run_daily.py activate-evolution \
+  --version CANDIDATE_VERSION --shadow-report /persistent/llmsd-data/evolution/shadow/YYYY-MM-DD/PROPOSAL_ID/report.json
+python scripts/llm_security/run_daily.py evolution-status
+python scripts/llm_security/run_daily.py rollback-evolution
+```
+
+演化数据位于 `LLMSD_DATA_DIR/evolution/`（默认 `.data/evolution/`），包含 `candidates/`、`shadow/`、`active/`、`rejected/`、`history/` 和 `active.json`，不提交私有数据或密钥。
+
+仓库中的 baseline adapters、事实 schema、canonical match 门槛、provenance
+和 `facts.json` materializer 是只读边界。active version 不可覆盖；失败的
+overlay 会记录回滚事件并恢复上一稳定版本，但 baseline 必须独立完成事实采集，
+回滚不能成为事实兜底。
+
 Hermes 的完整约束见 `scripts/llm_security/hermes_prompt.md`。运行前可用 `python scripts/llm_security/run_daily.py doctor` 检查网络源、SerpAPI 配置和数据目录。
 
 ## GitHub 网络路径
 
-仓库提供两个可选 Actions。`Collect paper candidates` 按日只访问 arXiv 和 OpenReview，并上传候选 artifact；Hermes 可以用 `gh run download <run-id> -n paper-candidates-<run-id> -D RUN` 下载它，仍须按 `paper_id` 排序，再在服务器上运行 `materialize`。`Probe Google Scholar via SerpAPI` 是手动的单标题网络探测，用于确认 GitHub 出口可访问 SerpAPI；它不写入论文事实，每次运行最多消耗一次查询额度。发布流程不会因为 Scholar 不可达而替换或编造论文。
+仓库提供两个可选 Actions。`Collect paper candidates` 在 headless Linux runner
+上先运行所有注册的 proceedings/期刊 adapters，再运行 OpenReview 和 arXiv，
+并上传候选 artifact；配置 `IEEE_XPLORE_API_KEY` 时额外运行 IEEE Xplore，
+未配置时 Crossref 仍可独立提供 IEEE/ACM DOI 元数据。Hermes 可以用
+`gh run download <run-id> -n paper-candidates-<run-id> -D RUN` 下载 artifact，
+仍须按 `paper_id` 排序，再在服务器上运行 `materialize`。`Probe Google Scholar
+via SerpAPI` 的 `workflow_run` 路径只读取这个 artifact，最多查询五个
+unresolved/shortlisted 候选并上传独立 `scholar-enrichment.json`；它不会修改
+候选或 `facts.json`。手动 dispatch 仍是单标题 smoke test，每次最多消耗一次
+额度。发布流程不会因为 Scholar 不可达而替换或编造论文。
+
+若需要从 JavaScript proceedings 页面发现候选链接，可在 headless Linux 上运行
+`scripts/llm_security/headless_discover.py`。该浏览器层只返回 allowlisted
+URL 的标题、短文本和相对链接 evidence，最多十个 URL，明确写入
+`facts_written: false`；它不能访问 secret、构造 `PaperFacts` 或写入
+`facts.json`。所有候选必须重新进入确定性的官方 adapter/materializer。
 
 若某个出口（当前本地 OpenReview API 返回 403）不可达，错误会保存在 `source_reports`，可用的 arXiv 候选仍会继续处理；这不是事实兜底，只有重新从权威源获取并通过身份校验的记录才能进入 `facts.json`。
 

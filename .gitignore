@@ -1,17 +1,42 @@
+# --- Python ---
 __pycache__/
 *.pyc
-.pytest_cache
+*.pyo
+.pytest_cache/
+
+# --- Local virtualenv ---
 .venv/
+venv/
+
+# --- Hermes (this assistant) state, rules, memories, cache ---
+.hermes/
+
+# --- Project-local generated state & downloads ---
+.data/
 cache/
 logs/
+downloads/
 run.lock
-.DS_Store
-.hermes/
-.data/
-docs/superpowers/
-tests/
-
-
 cron_prompt.md
+
+# --- Secrets / env ---
 .env
+.env.*
+
+# --- OS junk ---
+.DS_Store
+*.swp
+*.tmp
+*.log
+
+# --- Repo metadata that should not be tracked as content ---
+# AGENTS.md is intentionally not committed; the file on disk is still authoritative
+# for this checkout, but it must not leak into other clones or pull requests.
 AGENTS.md
+
+# --- Misc generated docs that were already excluded ---
+docs/superpowers/
+
+# --- Tests: kept on disk but not tracked. Add `!tests/` here only if you want
+#     to start committing test changes. ---
+tests/

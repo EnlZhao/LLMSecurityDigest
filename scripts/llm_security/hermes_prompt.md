@@ -24,4 +24,36 @@ You orchestrate the daily run, but scripts own every paper fact.
 
 Google Scholar is queried through SerpAPI only after a paper reaches the ranked shortlist. Scholar metadata is enrichment, not authority.
 
-GitHub Actions may produce a candidate artifact using only arXiv and OpenReview. Treat that artifact exactly like local `candidates.json`: facts still come from the collector, and `materialize` must verify BibTeX and full text before publishing. The optional Scholar probe is diagnostic only.
+The optional headless browser helper may collect only allowlisted candidate URL
+evidence. Its output is not a facts file and cannot be used to fill title,
+authors, abstract, venue, status, DOI, URL, or BibTeX. Always send any browser
+candidate back through the deterministic source adapter and materializer.
+
+## Evolution overlays
+
+Hermes is allowed to propose only strategy changes (queries, filter keywords,
+venue groups, and bounded ranking/source-policy values). Submit a JSON candidate
+through `run_daily.py reflect`; do not put title, authors, abstract, venue,
+status, DOI, dates, paper IDs, URLs, BibTeX, HTTP clients, or credentials in an
+overlay. Single-paper hardcoding is rejected by the validator. Run:
+
+```bash
+python scripts/llm_security/run_daily.py validate-evolution --candidate candidate.json
+python scripts/llm_security/run_daily.py shadow-evolution --candidate candidate.json
+# Pass the exact persisted report produced by shadow-evolution; activation never
+# reruns shadow implicitly.
+python scripts/llm_security/run_daily.py activate-evolution \
+  --candidate candidate.json --shadow-report /persistent/llmsd-data/evolution/shadow/YYYY-MM-DD/PROPOSAL_ID/report.json
+```
+
+Activation writes an immutable version atomically to `active.json`; the active
+version is read at the beginning of the next collection run. Use
+`evolution-status` and `rollback-evolution` for auditable state changes. The
+runtime data directory contains `evolution/candidates`, `shadow`, `active`,
+`rejected`, and `history`; it must never contain secrets or private paper text.
+
+GitHub Actions may produce a candidate artifact from the registered formal
+venues, arXiv, and OpenReview. Treat that artifact exactly like local
+`candidates.json`: facts still come from the collector, and `materialize` must
+verify BibTeX and full text before publishing. The optional Scholar probe is
+diagnostic only.
