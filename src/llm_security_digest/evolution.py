@@ -25,7 +25,15 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 
 from . import config
 from .papers.http import HttpClient, HttpResponse
-from .papers.models import FACT_FIELDS, PaperFacts, SearchPlan, VENUE_SPECS, get_venue_spec, utc_now
+from .papers.models import (
+    FACT_FIELDS,
+    PaperFacts,
+    SearchPlan,
+    VENUE_SPECS,
+    get_registered_openreview_spec,
+    get_registered_venue_spec,
+    utc_now,
+)
 
 
 class EvolutionValidationError(ValueError):
@@ -191,7 +199,7 @@ def _validate_source_path(value: Any) -> str:
 def _registered_source_hosts(venue_group: str, source_key: str) -> frozenset[str]:
     """Return hosts allowed for a registered venue/source adapter pair."""
     try:
-        spec = get_venue_spec(venue_group)
+        spec = get_registered_venue_spec(venue_group)
     except Exception:
         spec = None
     if spec is None:
@@ -232,7 +240,7 @@ def _validate_collection_path(venue_group: str, source_key: str, path: str) -> N
     DOI, or detail-page slug is deliberately resolved by the baseline adapter.
     This keeps experiments general instead of encoding one successful paper.
     """
-    spec = get_venue_spec(venue_group)
+    spec = get_registered_venue_spec(venue_group)
     adapter = normalize_overlay_text(source_key).replace("-", "_")
     if spec is not None and adapter not in {"crossref", "ieee_xplore", "openreview", "arxiv"}:
         adapter = normalize_overlay_text(spec.adapter or adapter).replace("-", "_")
@@ -445,16 +453,18 @@ def _validate_iso_date(value: Any, field: str) -> str:
 def _validate_overlay_venues(value: Any, field: str, *, source: str) -> None:
     _validate_text_array(value, field, max_items=30, max_length=500)
     for venue in value:
-        spec = get_venue_spec(venue)
-        if spec is None:
-            raise EvolutionValidationError(f"{field} contains an unregistered venue: {venue}")
         if source == "openreview":
-            if not spec.matches_openreview(venue):
+            spec = get_registered_openreview_spec(venue)
+            if spec is None:
                 raise EvolutionValidationError(f"{field} must contain registered OpenReview venue ids: {venue}")
             if "openreview" not in spec.source_kinds:
                 raise EvolutionValidationError(f"OpenReview source is not registered for venue: {venue}")
-        elif "crossref" not in spec.source_kinds:
-            raise EvolutionValidationError(f"Crossref source is not registered for venue: {venue}")
+        else:
+            spec = get_registered_venue_spec(venue)
+            if spec is None:
+                raise EvolutionValidationError(f"{field} contains an unregistered venue: {venue}")
+            if "crossref" not in spec.source_kinds:
+                raise EvolutionValidationError(f"Crossref source is not registered for venue: {venue}")
 
 
 def _validate_prompt_text_array(value: Any, field: str, *, max_items: int, max_length: int) -> None:
@@ -1080,7 +1090,7 @@ class BaselineHttpBroker:
         hosts = _registered_source_hosts(normalized["venue_group"], normalized["source_key"])
         # Sorting makes host selection stable when a source has v1/v2 aliases.
         key = normalize_overlay_text(normalized["source_key"]).replace("-", "_")
-        spec = get_venue_spec(normalized["venue_group"])
+        spec = get_registered_venue_spec(normalized["venue_group"])
         adapter_key = normalize_overlay_text(spec.adapter if spec else "").replace("-", "_")
         host = _SOURCE_CANONICAL_HOST.get(key) or _SOURCE_CANONICAL_HOST.get(adapter_key) or next(iter(sorted(hosts)))
         return f"https://{host}{normalized['path']}", normalized

@@ -90,11 +90,11 @@ class VenueSpec:
         family and path suffix remain registry-owned, so accepting a different
         year is safe while an arbitrary ``*.cc`` family is still rejected.
         """
-        candidate = str(value or "").strip().rstrip("/").casefold()
+        candidate = _normalize_openreview_id(value)
         if not candidate:
             return False
         for registered in self.openreview_ids:
-            expected = str(registered).strip().rstrip("/").casefold()
+            expected = _normalize_openreview_id(registered)
             if candidate == expected:
                 return True
             expected_parts = expected.split("/")
@@ -195,9 +195,41 @@ _VENUE_ALIASES: dict[str, VenueSpec] = {
     for spec in VENUE_SPECS
     for alias in (spec.key, spec.name, *spec.aliases, *spec.crossref_container_titles)
 }
+
+
+def _normalize_openreview_id(value: str) -> str:
+    """Return the canonical comparison key for an OpenReview venue id."""
+    return unicodedata.normalize("NFKC", str(value or "")).strip().rstrip("/").casefold()
+
+
 _OPENREVIEW_VENUES: dict[str, VenueSpec] = {
-    venue_id.casefold(): spec for spec in VENUE_SPECS for venue_id in spec.openreview_ids
+    _normalize_openreview_id(venue_id): spec for spec in VENUE_SPECS for venue_id in spec.openreview_ids
 }
+
+
+def get_registered_openreview_spec(value: str | None) -> VenueSpec | None:
+    """Return a spec only when ``value`` is an exact registered OpenReview id.
+
+    This intentionally differs from :func:`get_venue_spec`, whose family
+    matching is retained for recognizing source records from newer cycles.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return _OPENREVIEW_VENUES.get(_normalize_openreview_id(value))
+
+
+def get_registered_venue_spec(value: str | VenueSpec | None) -> VenueSpec | None:
+    """Resolve a canonical registry alias or exact OpenReview venue id.
+
+    Unlike :func:`get_venue_spec`, this resolver never expands an OpenReview
+    venue family to an unregistered year and is therefore suitable for plan
+    and overlay authorization.
+    """
+    if isinstance(value, VenueSpec):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return _VENUE_ALIASES.get(_registry_key(value)) or get_registered_openreview_spec(value)
 
 
 def get_venue_spec(value: str | VenueSpec | None) -> VenueSpec | None:
@@ -205,7 +237,7 @@ def get_venue_spec(value: str | VenueSpec | None) -> VenueSpec | None:
         return value
     if not value or not isinstance(value, str):
         return None
-    direct = _VENUE_ALIASES.get(_registry_key(value)) or _OPENREVIEW_VENUES.get(value.strip().casefold())
+    direct = _VENUE_ALIASES.get(_registry_key(value)) or _OPENREVIEW_VENUES.get(_normalize_openreview_id(value))
     if direct is not None:
         return direct
     # OpenReview keeps the same venue family while changing the year.  Defer
@@ -230,7 +262,7 @@ def venue_specs_for_group(groups: list[str] | tuple[str, ...] | None) -> list[Ve
         return list(VENUE_SPECS)
     result: list[VenueSpec] = []
     for group in groups:
-        spec = get_venue_spec(group)
+        spec = get_registered_venue_spec(group)
         if spec is None:
             raise ValueError(f"unknown venue group: {group}")
         if spec not in result:
@@ -405,13 +437,13 @@ class SearchPlan:
             raise ValueError("sources must not contain duplicates")
         venue_specs_for_group(self.venue_groups)
         for venue in self.openreview_venues:
-            spec = get_venue_spec(venue)
-            if spec is None or not spec.matches_openreview(venue):
+            spec = get_registered_openreview_spec(venue)
+            if spec is None:
                 raise ValueError(f"unknown OpenReview venue: {venue}")
             if "openreview" not in spec.source_kinds:
                 raise ValueError(f"OpenReview source is not registered for venue: {venue}")
         for venue in self.crossref_venues:
-            spec = get_venue_spec(venue)
+            spec = get_registered_venue_spec(venue)
             if spec is None or "crossref" not in spec.source_kinds:
                 raise ValueError(f"unknown Crossref venue: {venue}")
         if not isinstance(self.identifiers, dict):
