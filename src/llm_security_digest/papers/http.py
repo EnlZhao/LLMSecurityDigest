@@ -11,6 +11,26 @@ from typing import Any, Iterable
 from urllib import error, parse, request
 
 
+_SECRET_QUERY_MARKERS = frozenset({
+    "key", "api_key", "apikey", "access_token", "token", "secret", "password",
+    "passwd", "authorization", "auth", "credential", "cookie", "session",
+})
+
+
+def _secret_query_key(value: str) -> bool:
+    lowered = value.casefold().replace("-", "_")
+    return (
+        lowered in _SECRET_QUERY_MARKERS
+        or lowered.endswith(("_api_key", "_access_token", "_token"))
+        or any(
+            lowered.startswith(marker + "_")
+            for marker in _SECRET_QUERY_MARKERS
+            if marker not in {"token", "auth"}
+        )
+        or lowered.startswith(("token_", "auth_"))
+    )
+
+
 def _safe_url(url: str, provenance_url: str | None = None) -> str:
     """Remove credentials from URLs used in exceptions and provenance."""
     value = provenance_url or url
@@ -19,8 +39,7 @@ def _safe_url(url: str, provenance_url: str | None = None) -> str:
         return value
     safe_query = []
     for key, item in parse.parse_qsl(parsed.query, keep_blank_values=True):
-        lowered = key.casefold()
-        if any(marker in lowered for marker in ("key", "token", "secret", "password", "auth")):
+        if _secret_query_key(key):
             item = "<redacted>"
         safe_query.append(parse.quote_plus(key) + "=" + parse.quote_plus(item))
     return parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "&".join(safe_query), parsed.fragment))
@@ -31,14 +50,8 @@ def _query_has_secret(url: str) -> bool:
         pairs = parse.parse_qsl(parse.urlsplit(url).query, keep_blank_values=True)
     except ValueError:
         return True
-    markers = ("key", "api_key", "apikey", "access_token", "token", "secret", "password", "passwd", "authorization", "auth", "credential", "cookie", "session")
     for key, _ in pairs:
-        lowered = key.casefold().replace("-", "_")
-        if lowered in markers or lowered.endswith(("_api_key", "_access_token", "_token")):
-            return True
-        if any(lowered.startswith(marker + "_") for marker in markers if marker not in {"token", "auth"}):
-            return True
-        if lowered.startswith(("token_", "auth_")):
+        if _secret_query_key(key):
             return True
     return False
 
