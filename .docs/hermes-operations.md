@@ -34,6 +34,14 @@ Hermes cannot use a `core` label to override this boundary. An
 unverified paper must remain visible, and no shortfall is filled by an LLM
 guess or an automatic substitute.
 
+When the plan has keyword or date filtering, the baseline gives every source a
+small, bounded discovery buffer equal to `target`, then applies those filters
+to the script-parsed records. This prevents early alphabetical or newest-first
+records from exhausting a source limit before relevant records are seen. The
+published candidate artifact retains the requested limits and records the
+larger limits actually used; the buffer never enlarges the ten-paper output or
+allows an LLM to create a candidate.
+
 ## Sources and adapters
 
 `VenueSpec` in `src/llm_security_digest/papers/models.py` is the allowlisted
@@ -59,9 +67,24 @@ container titles. The formal tier is routed to deterministic adapters in
   the parser accepts only its year-bound detail and PDF URL grammars. It uses
   a page DOI for BibTeX content negotiation and otherwise remains incomplete.
 - AAAI uses the OJS archive; IJCAI uses its proceedings pages.
-- IEEE/ACM venue groups use registered Crossref queries with ISSN/container
-  filtering, followed by DOI content negotiation for BibTeX. IEEE venues also
-  have an optional `ieee_xplore` adapter backed by the official
+- IEEE S&P uses the anonymous IEEE Computer Society CSDL GraphQL endpoint for
+  official proceedings metadata. Its source ID and landing/PDF paths are
+  rebuilt from the CSDL `year`, registered `sp` prefix, article FNO, and
+  article ID; its GraphQL detail proceeding must also exactly report the
+  registered group, proceeding ID, acronym, and year. No page URL, snippet,
+  or LLM field can supply them. A CSDL FNO has a numeric prefix, document
+  class, and numeric suffix, while older proceedings use a numeric FNO. `z`
+  and Roman-numeral FNO suffixes are front matter; documented article classes
+  such as `a` and `b`, plus numeric article FNOs, are eligible for detail
+  validation. Front matter is reported as filtered without consuming the paper
+  candidate budget. Candidate discovery requires CSDL
+  `isOpenAccess: true`, `hasPdf: true`, document type `proceedings`, and a
+  DOI for authoritative BibTeX, but does not download bodies.
+  During `materialize`, the baseline follows the fixed CSDL PDF endpoint,
+  verifies PDF bytes and title identity, and never persists its short-lived
+  signed redirect URL. Other IEEE/ACM venue groups use registered Crossref
+  queries with ISSN/container filtering, followed by DOI content negotiation
+  for BibTeX. IEEE venues also have an optional `ieee_xplore` adapter backed by the official
   `ieeexploreapi.ieee.org` endpoint. It reads only `IEEE_XPLORE_API_KEY` from
   the environment, uses a baseline-owned publication registry, and emits an
   explicit `missing_api_key`, HTTP, or schema report when the API is not
@@ -120,6 +143,7 @@ inputs to the baseline code; an LLM never converts a response into metadata.
 | OpenReview | `openreview-py` API v2 uses `https://api2.openreview.net` and paginated `get_notes` calls with `content`, `limit`, `offset`, and `details=replies`. The adapter follows the submission forum, assigned venue ID, and decision replies before accepting a record. For older venue deployments it uses the v1-compatible `https://api.openreview.net` client and the same venue/decision checks. | No API key is required for public notes. Optional `OPENREVIEW_USERNAME` and `OPENREVIEW_PASSWORD` are used only by the official client factory; auth/challenge failures remain in the report. |
 | arXiv | Atom queries use `https://export.arxiv.org/api/query` with bounded `search_query`, `start`, and `max_results` parameters. The parser reads title, authors, summary, categories, dates, DOI, journal reference, comments, and links. BibTeX is fetched from `https://arxiv.org/bibtex/<id>` after the ID is normalized. | No key. Requests are serialized with the arXiv-recommended three-second minimum interval and bounded retries; a `429` or transport error is reported rather than replaced with a guess. |
 | Crossref / DOI | Venue/ISSN queries use `https://api.crossref.org/works` and registered container filters. A DOI identity refresh uses `https://api.crossref.org/works/<doi>`. BibTeX is obtained by DOI content negotiation at `https://doi.org/<doi>` with `Accept: application/x-bibtex`, then checked against the title and every author. | No key. `LLMSD_CONTACT_EMAIL` is optional but recommended in the User-Agent/mailto for responsible rate limiting. |
+| IEEE Computer Society CSDL | IEEE S&P proceedings metadata uses anonymous GraphQL at `https://www.computer.org/csdl/api/v1/graphql`. The baseline requires exact registered group/proceeding identity, `sp` article identity, `pubType: proceedings`, a DOI, `isOpenAccess: true`, `hasPdf: true`, and the source-derived fixed PDF endpoint. Signed redirect URLs are never stored. | No key. CSDL front matter is counted as filtered; DOI-less or non-proceedings records are incomplete, and PDF byte/identity verification occurs only in materialization. |
 | IEEE Xplore | Optional official endpoint `https://ieeexploreapi.ieee.org/api/v1/search/articles` with the registry-provided publication title, query text, pagination, and `format=json`. The API key is sent only as the `apikey` request parameter; provenance URLs redact it. | `IEEE_XPLORE_API_KEY` is required for this adapter. A missing key, HTTP error, or schema error is visible. Registered Crossref remains a separate authoritative path, not an LLM fallback. |
 | ACM | There is no unregistered ACM private endpoint in the baseline. CCS/TOPS use the registered Crossref container/ISSN query and DOI content negotiation. ACM pages or Scholar snippets cannot supply facts. | No ACM key is needed for the Crossref path. Any future ACM API must first be added to the venue/host/key registry. |
 

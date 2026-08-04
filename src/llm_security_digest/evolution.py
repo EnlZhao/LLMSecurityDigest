@@ -126,6 +126,7 @@ _SOURCE_KEY_HOSTS: dict[str, frozenset[str]] = {
     "ndss": frozenset({"www.ndss-symposium.org"}),
     "ieee": frozenset({"ieeexplore.ieee.org", "www.ieee-security.org"}),
     "ieee_xplore": frozenset({"ieeexploreapi.ieee.org"}),
+    "ieee_csdl": frozenset({"www.computer.org", "csdl-downloads.ieeecomputer.org"}),
     "acm": frozenset({"dl.acm.org", "www.sigsac.org"}),
 }
 _SOURCE_CANONICAL_HOST = {
@@ -133,6 +134,7 @@ _SOURCE_CANONICAL_HOST = {
     "arxiv": "export.arxiv.org",
     "crossref": "api.crossref.org",
     "ieee_xplore": "ieeexploreapi.ieee.org",
+    "ieee_csdl": "www.computer.org",
 }
 
 
@@ -261,6 +263,10 @@ def _validate_collection_path(venue_group: str, source_key: str, path: str) -> N
         "arxiv": (r"^/(?:abs|pdf|bibtex)/[^/]+$",),
         "crossref": (r"^/works/[^/]+$",),
         "ieee_xplore": (r"/(?:document|article)/[^/]+$",),
+        "ieee_csdl": (
+            r"^/csdl/proceedings-article/[^/]+/[^/]+/[^/]+/[^/]+$",
+            r"^/csdl/pds/api/csdl/proceedings/download-article/[^/]+/pdf$",
+        ),
         "openreview": (r"^/notes/[^/]+$",),
     }.get(adapter, ())
     for pattern in disallowed_patterns:
@@ -1091,6 +1097,7 @@ class BaselineHttpBroker:
         "proceedings.mlr.press", "proceedings.neurips.cc", "aclanthology.org",
         "ojs.aaai.org", "www.ijcai.org", "www.usenix.org",
         "www.ndss-symposium.org", "ieeexplore.ieee.org", "ieeexploreapi.ieee.org", "www.ieee-security.org",
+        "www.computer.org", "csdl-downloads.ieeecomputer.org",
         "dl.acm.org", "www.sigsac.org", "icml.cc", "neurips.cc",
     })
 

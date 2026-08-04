@@ -33,7 +33,7 @@ DEFAULT_PLAN = {
     "core_keywords": [
         "jailbreak", "prompt injection", "backdoor", "agent security"
     ],
-    "sources": ["official", "openreview", "crossref", "ieee_xplore", "arxiv"],
+    "sources": ["official", "openreview", "crossref", "arxiv", "ieee_xplore"],
     "openreview_venues": list(DEFAULT_OPENREVIEW_VENUES),
     "target": 10,
     "scholar_enrich_limit": 30,

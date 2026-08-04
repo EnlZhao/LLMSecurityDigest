@@ -28,6 +28,13 @@ unverified evidence. Rank more than {n} candidate paper_ids. The materialize
 command downloads and identity-validates full text and obtains authoritative
 BibTeX. It invokes SerpAPI only for that ranked shortlist, never for discovery.
 
+Within each permitted tier, rank by topical relevance, technical novelty,
+methodological clarity, evidence for the claimed result, and reader value. A
+venue/status label is script-owned evidence, not a substitute for reading the
+verified abstract and bounded full text. In Chinese analysis, distinguish what
+the frozen paper directly supports from your interpretation and state
+uncertainty when the retrieved sections do not support a conclusion.
+
 Hermes may propose strategy-only evolution overlays with `reflect`; it may not
 write facts, HTTP endpoints, credentials, or single-paper title/DOI/date values.
 Run `validate-evolution` and `shadow-evolution` before activation. Activation is

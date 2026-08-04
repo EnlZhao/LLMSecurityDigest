@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import unicodedata
 from dataclasses import asdict, dataclass, field
@@ -118,9 +119,9 @@ VENUE_SPECS: tuple[VenueSpec, ...] = (
               crossref_container_titles=("USENIX Security Symposium", "USENIX Security"),
               adapter="usenix"),
     VenueSpec("ieee-sp", "IEEE Symposium on Security and Privacy", ("IEEE S&P", "IEEE Symposium on Security and Privacy"),
-              ("https://www.ieee-security.org/TC/SP-Index.html",),
+              ("https://www.ieee-security.org/TC/SP-Index.html", "https://www.computer.org/csdl/proceedings"),
               crossref_issns=("1081-6011",), crossref_container_titles=("IEEE Symposium on Security and Privacy", "Proceedings - IEEE Symposium on Security and Privacy"),
-              source_kinds=("crossref", "ieee_xplore"), adapter="crossref"),
+              source_kinds=("official", "crossref", "ieee_xplore"), adapter="ieee_csdl"),
     VenueSpec("acm-ccs", "ACM Conference on Computer and Communications Security", ("ACM CCS", "CCS"),
               ("https://www.sigsac.org/ccs.html",),
               crossref_container_titles=("Proceedings of the ACM Conference on Computer and Communications Security", "ACM SIGSAC Conference on Computer and Communications Security", "ACM CCS"),
@@ -502,7 +503,10 @@ class SelectionEntry:
         values = raw.get("selections") if isinstance(raw, dict) else None
         if not isinstance(values, list):
             raise ValueError("selection must contain a selections array")
+        if len(values) > 100:
+            raise ValueError("selection contains more than 100 entries")
         allowed = {"paper_id", "score", "category", "reason", "track"}
+        required = allowed
         entries: list[SelectionEntry] = []
         seen: set[str] = set()
         for index, value in enumerate(values):
@@ -514,14 +518,38 @@ class SelectionEntry:
                 raise ValueError(f"selection {index} contains forbidden fact fields: {sorted(forbidden)}")
             if unknown:
                 raise ValueError(f"selection {index} contains unknown fields: {sorted(unknown)}")
-            track = value.get("track")
-            if type(track) is not str or track not in {"core", "broad"}:
+            missing = required - set(value)
+            if missing:
+                raise ValueError(f"selection {index} is missing required fields: {sorted(missing)}")
+            string_limits = {
+                "paper_id": 320,
+                "category": 160,
+                "reason": 2000,
+                "track": 16,
+            }
+            for field_name, limit in string_limits.items():
+                field_value = value[field_name]
+                if type(field_value) is not str:
+                    raise ValueError(f"selection {index} field {field_name} must be a string")
+                if len(field_value) > limit:
+                    raise ValueError(f"selection {index} field {field_name} exceeds {limit} characters")
+            score = value["score"]
+            if isinstance(score, bool) or not isinstance(score, (int, float)):
+                raise ValueError(f"selection {index} score must be a finite number")
+            try:
+                score_value = float(score)
+            except (OverflowError, ValueError):
+                raise ValueError(f"selection {index} score must be a finite number") from None
+            if not math.isfinite(score_value):
+                raise ValueError(f"selection {index} score must be a finite number")
+            track = value["track"]
+            if track not in {"core", "broad"}:
                 raise ValueError(f"selection {index} must contain track 'core' or 'broad'")
             entry = cls(
-                paper_id=str(value.get("paper_id", "")).strip(),
-                score=float(value.get("score", 0)),
-                category=str(value.get("category", "Other")).strip() or "Other",
-                reason=str(value.get("reason", "")).strip(),
+                paper_id=value["paper_id"].strip(),
+                score=score_value,
+                category=value["category"].strip() or "Other",
+                reason=value["reason"].strip(),
                 track=track,
             )
             if not entry.paper_id or entry.paper_id in seen:

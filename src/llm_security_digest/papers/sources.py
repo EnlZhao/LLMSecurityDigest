@@ -33,6 +33,7 @@ from .official import (
     ACLAnthologyAdapter,
     CVFAdapter,
     IJCAIAdapter,
+    IEEEComputerCSDLAdapter,
     NDSSAdapter,
     NeurIPSAdapter,
     PMLRAdapter,
@@ -116,6 +117,7 @@ _OFFICIAL_SOURCE_SPECS = {
     "ndss": "ndss",
     "cvpr": "cvpr",
     "eccv": "eccv",
+    "ieee_csdl": "ieee-sp",
 }
 _SOURCE_HOSTS = {
     "acl": frozenset({"aclanthology.org"}),
@@ -128,6 +130,7 @@ _SOURCE_HOSTS = {
     "ndss": frozenset({"www.ndss-symposium.org"}),
     "cvpr": frozenset({"openaccess.thecvf.com"}),
     "eccv": frozenset({"www.ecva.net"}),
+    "ieee_csdl": frozenset({"www.computer.org", "csdl-downloads.ieeecomputer.org"}),
 }
 _DOI_RE = re.compile(r"^10\.\d{4,9}/[-._;()/:A-Z0-9]+$", re.IGNORECASE)
 
@@ -287,6 +290,15 @@ def official_route_for_paper(paper: PaperFacts) -> tuple[str, str, frozenset[str
             raise ValueError("invalid ECVA source id")
         year = int(match.group(1))
         url = f"https://www.ecva.net/papers/eccv_{year}/papers_ECCV/html/{source_id}.php"
+    elif source == "ieee_csdl":
+        try:
+            year, prefix, fno, article_id = IEEEComputerCSDLAdapter.parse_source_id(source_id)
+        except ValueError:
+            raise ValueError("invalid IEEE CSDL source id")
+        url = (
+            f"https://www.computer.org/csdl/proceedings-article/"
+            f"{prefix}/{year}/{fno}/{article_id}"
+        )
     else:  # pragma: no cover - source map is exhaustive by construction.
         raise ValueError(f"unsupported official source: {paper.source!r}")
     return spec_key, url, hosts
@@ -314,6 +326,20 @@ def trusted_fulltext_hosts(paper: PaperFacts) -> frozenset[str]:
 def trusted_fulltext_url(paper: PaperFacts, url: str) -> bool:
     """Apply the source-specific path restriction for registered PDF hosts."""
     parsed = parse.urlsplit(url)
+    if str(paper.source).casefold() == "ieee_csdl":
+        try:
+            _year, _prefix, _fno, article_id = IEEEComputerCSDLAdapter.parse_source_id(str(paper.source_id or ""))
+        except ValueError:
+            return False
+        return bool(
+            parsed.scheme.casefold() == "https"
+            and parsed.hostname
+            and parsed.hostname.casefold().rstrip(".") == "www.computer.org"
+            and not parsed.query
+            and parsed.username is None
+            and parsed.password is None
+            and parsed.path == f"/csdl/pds/api/csdl/proceedings/download-article/{article_id}/pdf"
+        )
     if str(paper.source).casefold() != "pmlr" or (parsed.hostname or "").casefold().rstrip(".") != "raw.githubusercontent.com":
         return True
     paper_key, separator, volume = str(paper.source_id or "").rpartition(":")
@@ -862,6 +888,8 @@ class OfficialSource:
         spec = get_venue_spec(spec_key)
         if spec is None or spec.adapter not in ADAPTERS:
             raise ValueError(f"no official venue adapter for {paper.paper_id}")
+        if spec.adapter == "ieee_csdl":
+            return IEEEComputerCSDLAdapter(self.client).fetch_by_id(paper, spec)
         response = self.client.get(
             canonical_url,
             min_interval=0.2,
@@ -1775,6 +1803,65 @@ class CrossrefSource:
             raise ValueError(f"Crossref identity lookup returned {len(matches)} matches for {normalized_doi}")
         return matches[0]
 
+    def resolve_ndss_doi(self, paper: PaperFacts) -> tuple[str, dict[str, Any]]:
+        """Resolve a DOI omitted by an NDSS detail page only on exact identity.
+
+        Recent NDSS pages expose the authoritative title, authors, abstract,
+        and PDF but omit a citation export and DOI.  Crossref is queried as a
+        separate publisher deposit; a result is usable only when its title,
+        first author, full author set, container, and type all agree.  The
+        resulting DOI is then used only for DOI BibTeX content negotiation.
+        """
+        if paper.source != "ndss" or paper.doi:
+            raise ValueError("NDSS DOI resolution requires a DOI-less NDSS record")
+        params = {
+            "query.bibliographic": paper.title,
+            "rows": "5",
+            "select": "DOI,title,author,container-title,type",
+        }
+        if self.contact_email:
+            params["mailto"] = self.contact_email
+        response = self.client.get(
+            f"{CROSSREF_API_URL}?{parse.urlencode(params)}",
+            min_interval=0.1,
+            max_bytes=2 * 1024 * 1024,
+            allowed_hosts={"api.crossref.org"},
+        )
+        payload = response.json()
+        message = payload.get("message") if isinstance(payload, dict) else None
+        items = message.get("items") if isinstance(message, dict) else None
+        if not isinstance(items, list):
+            raise ValueError("Crossref NDSS DOI lookup returned no items")
+        spec = get_venue_spec("ndss")
+        assert spec is not None
+        matches: list[str] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            doi = normalize_doi(_text(item.get("DOI")))
+            title = _text(item.get("title"))
+            authors = [
+                " ".join(part for part in (_text(author.get("given")), _text(author.get("family"))) if part)
+                for author in item.get("author") or []
+                if isinstance(author, dict)
+            ]
+            containers = _list(item.get("container-title"))
+            if (
+                not _DOI_RE.fullmatch(doi)
+                or _text(item.get("type")) != "proceedings-article"
+                or normalize_title(title) != normalize_title(paper.title)
+                or not authors
+                or _author_identity(authors[0]) != _author_identity(paper.authors[0] if paper.authors else "")
+                or author_jaccard(authors, paper.authors) < 0.8
+                or not any(spec.matches_container(container) for container in containers)
+            ):
+                continue
+            matches.append(doi)
+        matches = list(dict.fromkeys(matches))
+        if len(matches) != 1:
+            raise ValueError(f"Crossref NDSS DOI lookup returned {len(matches)} exact matches")
+        return matches[0], _provenance(response, source="crossref_ndss_exact_doi")
+
 
 class IeeeXploreSource:
     """Deterministic IEEE Xplore discovery using the official API.
@@ -1786,6 +1873,28 @@ class IeeeXploreSource:
     """
 
     name = "ieee_xplore"
+    MAX_RECORDS_PER_REQUEST = 100
+
+    @staticmethod
+    def _published_at(item: dict[str, Any]) -> str | None:
+        """Parse only a complete date returned by the official API."""
+        for field in ("publication_date", "publicationDate", "date_of_publication", "dateOfPublication"):
+            value = _text(item.get(field))
+            if not value:
+                continue
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            except ValueError:
+                parsed = None
+                for pattern in ("%d %B %Y", "%d %b %Y", "%B %d, %Y", "%b %d, %Y"):
+                    try:
+                        parsed = datetime.strptime(value, pattern)
+                        break
+                    except ValueError:
+                        continue
+            if parsed is not None:
+                return parsed.date().isoformat() + "T00:00:00Z"
+        return None
 
     def __init__(self, client: HttpClient, *, api_key: str | None = None):
         self.client = client
@@ -1857,9 +1966,9 @@ class IeeeXploreSource:
                 pdf_url = ""
             if pdf_url and not pdf_url.startswith("https://"):
                 pdf_url = ""
-            # IEEE Xplore's year field is not a publication timestamp.
-            # Keep the date unknown unless the API supplies an exact date.
-            published_at = None
+            # IEEE Xplore's year field is not a publication timestamp. A
+            # complete API date is authoritative; a year alone stays unknown.
+            published_at = IeeeXploreSource._published_at(item)
             missing = [
                 field for field, value in (
                     ("doi", doi), ("title", title), ("authors", authors),
@@ -1939,32 +2048,46 @@ class IeeeXploreSource:
             for query in plan.queries:
                 if len(venue_papers) >= plan.max_results_per_venue:
                     break
-                limit = min(plan.max_results_per_query, 100, plan.max_results_per_venue - len(venue_papers))
-                request_url, provenance_url = self._query_url(
-                    spec=spec,
-                    query=discovery_query_for_general_index(query),
-                    api_key=self.api_key,
-                    max_records=limit,
-                    start_record=1,
-                )
-                requests_attempted += 1
-                try:
-                    response = self.client.get(
-                        request_url,
-                        min_interval=0.25,
-                        max_bytes=20 * 1024 * 1024,
-                        provenance_url=provenance_url,
-                        allowed_hosts={"ieeexploreapi.ieee.org"},
+                query_limit = min(plan.max_results_per_query, plan.max_results_per_venue - len(venue_papers))
+                query_scanned = 0
+                start_record = 1
+                while query_scanned < query_limit and len(venue_papers) < plan.max_results_per_venue:
+                    limit = min(
+                        query_limit - query_scanned,
+                        self.MAX_RECORDS_PER_REQUEST,
+                        plan.max_results_per_venue - len(venue_papers),
                     )
-                    requests_succeeded += 1
-                    parsed, parsed_incomplete, stats = self.parse_articles(response, spec=spec)
-                    venue_papers.extend(parsed)
-                    venue_incomplete.extend(parsed_incomplete)
-                    scanned += stats["scanned"]
-                    filtered += stats["filtered"]
-                except Exception as exc:
-                    code = getattr(exc, "code", None)
-                    errors.append({"query": query, "error_type": type(exc).__name__, "http_status": code, "message": str(exc)[:300]})
+                    request_url, provenance_url = self._query_url(
+                        spec=spec,
+                        query=discovery_query_for_general_index(query),
+                        api_key=self.api_key,
+                        max_records=limit,
+                        start_record=start_record,
+                    )
+                    requests_attempted += 1
+                    try:
+                        response = self.client.get(
+                            request_url,
+                            min_interval=0.25,
+                            max_bytes=20 * 1024 * 1024,
+                            provenance_url=provenance_url,
+                            allowed_hosts={"ieeexploreapi.ieee.org"},
+                        )
+                        requests_succeeded += 1
+                        parsed, parsed_incomplete, stats = self.parse_articles(response, spec=spec)
+                        venue_papers.extend(parsed)
+                        venue_incomplete.extend(parsed_incomplete)
+                        page_scanned = stats["scanned"]
+                        query_scanned += page_scanned
+                        scanned += page_scanned
+                        filtered += stats["filtered"]
+                        if page_scanned < limit:
+                            break
+                        start_record += page_scanned
+                    except Exception as exc:
+                        code = getattr(exc, "code", None)
+                        errors.append({"query": query, "error_type": type(exc).__name__, "http_status": code, "message": str(exc)[:300]})
+                        break
             papers.extend(venue_papers)
             incomplete.extend(venue_incomplete)
             reports.append({

@@ -7,6 +7,43 @@ permissions:
   contents: read
 
 jobs:
+  openreview-v2:
+    name: OpenReview v2 connectivity
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install collector
+        run: python -m pip install .
+
+      - name: Fetch one public OpenReview v2 note
+        env:
+          OPENREVIEW_USERNAME: ${{ secrets.OPENREVIEW_USERNAME }}
+          OPENREVIEW_PASSWORD: ${{ secrets.OPENREVIEW_PASSWORD }}
+        run: |
+          python - <<'PY'
+          from llm_security_digest.papers.openreview_client import OpenReviewClientFactory
+
+          client = OpenReviewClientFactory.from_env().get("v2")
+          notes = client.get_notes(
+              content={"venueid": "ICLR.cc/2025/Conference"},
+              limit=1,
+              offset=0,
+              details="replies",
+          )
+          if not notes:
+              raise SystemExit("OpenReview v2 returned no public notes")
+          note = notes[0]
+          note_id = getattr(note, "id", None) or (note.get("id") if isinstance(note, dict) else None)
+          if not isinstance(note_id, str) or not note_id:
+              raise SystemExit("OpenReview v2 response has no note id")
+          PY
+
   smoke:
     name: ${{ matrix.source }} / ${{ matrix.venue }}
     runs-on: ubuntu-latest
@@ -35,6 +72,8 @@ jobs:
             venue: aaai
           - source: official
             venue: ijcai
+          - source: official
+            venue: ieee-sp
           - source: crossref
             venue: ieee-sp
           - source: crossref

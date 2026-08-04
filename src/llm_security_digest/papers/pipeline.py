@@ -4,7 +4,7 @@ import json
 import os
 import re
 import unicodedata
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 from urllib import parse
@@ -81,6 +81,19 @@ def _matches_date_window(paper: PaperFacts, plan: SearchPlan) -> bool:
     return True
 
 
+def _discovery_plan(plan: SearchPlan) -> SearchPlan:
+    """Keep a bounded buffer for records removed by plan-owned filtering."""
+    if not (plan.filter_keywords or plan.date_from or plan.date_to):
+        return plan
+    slack = plan.target
+    expanded = replace(
+        plan,
+        max_results_per_query=min(1000, plan.max_results_per_query + slack),
+        max_results_per_venue=min(5000, plan.max_results_per_venue + slack),
+    )
+    return plan if expanded == plan else expanded
+
+
 def _same_discovered_facts(left: PaperFacts, right: PaperFacts) -> bool:
     """Compare duplicate hits without treating response provenance as a fact.
 
@@ -135,6 +148,7 @@ def _deduplicate_formal_records(records: list[PaperFacts], reports: list[dict[st
 
 def collect(plan: SearchPlan, *, client: HttpClient | None = None) -> dict[str, Any]:
     client = client or default_client()
+    discovery_plan = _discovery_plan(plan)
     adapters = {
         "arxiv": ArxivSource(client),
         "official": OfficialSource(client),
@@ -149,12 +163,12 @@ def collect(plan: SearchPlan, *, client: HttpClient | None = None) -> dict[str, 
     incomplete: list[dict[str, Any]] = []
     # Official records are fetched before arXiv so reconciliation always has
     # a canonical pool available. The plan order remains visible in reports.
-    source_order = sorted(plan.sources, key=lambda name: {"official": 0, "openreview": 1, "crossref": 1, "ieee_xplore": 2, "arxiv": 3}.get(name, 4))
+    source_order = sorted(plan.sources, key=lambda name: _COLLECTION_SOURCE_PRIORITY.get(name, 4))
     for source_name in source_order:
         try:
             source = adapters[source_name]
-            result = source.discover_result(plan) if hasattr(source, "discover_result") else None
-            discovered = result.papers if result is not None else source.discover(plan)
+            result = source.discover_result(discovery_plan) if hasattr(source, "discover_result") else None
+            discovered = result.papers if result is not None else source.discover(discovery_plan)
             if result is not None:
                 incomplete.extend(result.incomplete)
                 reports.extend(result.reports)
@@ -236,6 +250,13 @@ def collect(plan: SearchPlan, *, client: HttpClient | None = None) -> dict[str, 
         "schema_version": 2,
         "generated_at": utc_now(),
         "plan": asdict(plan),
+        "discovery_limits": {
+            "requested_max_results_per_query": plan.max_results_per_query,
+            "requested_max_results_per_venue": plan.max_results_per_venue,
+            "used_max_results_per_query": discovery_plan.max_results_per_query,
+            "used_max_results_per_venue": discovery_plan.max_results_per_venue,
+            "filtering_buffer": discovery_plan is not plan,
+        },
         "source_reports": reports,
         "incomplete": incomplete,
         "candidate_queue": {"incomplete": incomplete},
@@ -467,6 +488,7 @@ def _bibtex_source_url(paper: PaperFacts) -> str | None:
         "aaai_ojs": {"ojs.aaai.org"},
         "cvpr": {"openaccess.thecvf.com"},
         "eccv": {"www.ecva.net"},
+        "ieee_csdl": {"www.computer.org"},
     }.get(source, set())
     if isinstance(value, str) and value.startswith("https://") and trusted_hosts:
         parsed = parse.urlsplit(value)
@@ -509,6 +531,7 @@ def _bibtex_hosts(paper: PaperFacts) -> frozenset[str] | None:
         "aaai_ojs": frozenset({"ojs.aaai.org"}),
         "cvpr": frozenset({"openaccess.thecvf.com"}),
         "eccv": frozenset({"www.ecva.net"}),
+        "ieee_csdl": frozenset({"www.computer.org"}),
     }.get(str(paper.source or "").casefold())
 
 
@@ -620,8 +643,20 @@ def fetch_fulltext(paper: PaperFacts, *, client: HttpClient, data_dir: Path, max
 _CANDIDATE_SOURCES = frozenset({
     "arxiv", "openreview", "crossref", "ieee_xplore",
     "acl", "emnlp", "pmlr", "neurips", "aaai_ojs", "ijcai", "usenix", "ndss",
-    "cvpr", "eccv",
+    "cvpr", "eccv", "ieee_csdl",
 })
+
+
+# Optional, credential-backed enrichment must never delay the no-key formal
+# sources or arXiv discovery. The order is baseline-owned rather than
+# configurable by an evolution overlay.
+_COLLECTION_SOURCE_PRIORITY = {
+    "official": 0,
+    "openreview": 1,
+    "crossref": 1,
+    "arxiv": 2,
+    "ieee_xplore": 3,
+}
 
 
 def _validate_candidate_identity(paper: PaperFacts) -> None:
@@ -662,11 +697,29 @@ def refresh_authoritative(paper: PaperFacts, *, client: HttpClient) -> PaperFact
         refreshed = CrossrefSource(client).fetch_by_doi(paper.doi)
     elif paper.source == "ieee_xplore" and paper.doi:
         refreshed = IeeeXploreSource(client).fetch_by_doi(paper.doi)
-    elif paper.source in {"acl", "emnlp", "pmlr", "neurips", "aaai_ojs", "ijcai", "usenix", "ndss", "cvpr", "eccv"}:
+    elif paper.source in {"acl", "emnlp", "pmlr", "neurips", "aaai_ojs", "ijcai", "usenix", "ndss", "cvpr", "eccv", "ieee_csdl"}:
         # OfficialSource derives the detail URL from the baseline source/id
         # grammar. Candidate venue metadata and landing URLs are not routing
         # inputs.
         refreshed = OfficialSource(client).fetch_by_id(paper)
+        if paper.source == "ndss" and not refreshed.doi:
+            # NDSS detail pages can omit a DOI and BibTeX export.  Resolve a
+            # DOI only through the exact title/author/container Crossref rule;
+            # the official NDSS record remains the owner of page/PDF facts.
+            doi, doi_provenance = CrossrefSource(
+                client, contact_email=os.getenv("LLMSD_CONTACT_EMAIL")
+            ).resolve_ndss_doi(refreshed)
+            refreshed.doi = doi
+            refreshed.identifiers = {**refreshed.identifiers, "doi": doi}
+            refreshed.platform_links = {
+                **refreshed.platform_links,
+                "doi": f"https://doi.org/{doi}",
+            }
+            refreshed.provenance["doi"] = dict(doi_provenance)
+            refreshed.venue_evidence = [
+                *refreshed.venue_evidence,
+                {"source": "crossref", "doi_resolution": "exact_title_author_container"},
+            ]
     else:
         raise ValueError(f"no authoritative identity refresh for source {paper.source!r}")
     if refreshed.paper_id != paper.paper_id:

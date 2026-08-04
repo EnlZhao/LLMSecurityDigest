@@ -16,7 +16,7 @@ MiniMax/Hermes 只负责搜索策略、关键词、过滤、排序、分类和�
 
 | 来源 | 用途 | 是否需要 Key |
 | --- | --- | --- |
-| 官方 proceedings adapters | USENIX、NDSS、ACL/EMNLP、PMLR/ICML、NeurIPS、CVF/CVPR、ECVA/ECCV、AAAI、IJCAI | 否 |
+| 官方 proceedings adapters | USENIX、NDSS、ACL/EMNLP、PMLR/ICML、NeurIPS、CVF/CVPR、ECVA/ECCV、AAAI、IJCAI、IEEE S&P CSDL | 否 |
 | OpenReview API v2/v1-compatible | ICLR、NeurIPS、ICML 等投稿、venue 与 decision replies | 否 |
 | arXiv Atom API | 广泛发现、预印本元数据与正式记录 reconciliation | 否 |
 | Crossref REST + DOI content negotiation | IEEE/ACM 注册 venue 的 DOI 元数据与官方 BibTeX | 否，建议配置联系邮箱 |
@@ -61,7 +61,10 @@ ISSN/container 查询，DOI BibTeX 通过
 `Accept: application/x-bibtex` 内容协商获取。IEEE Xplore 的
 `https://ieeexploreapi.ieee.org/api/v1/search/articles` 仅在配置
 `IEEE_XPLORE_API_KEY` 时启用，缺 key 或 API 失败会写入 source report，
-不会由 LLM 或 Scholar 代填。ACM CCS/TOPS 走 Crossref，不依赖 ACM 私有 key。
+不会由 LLM 或 Scholar 代填。IEEE S&P 同时使用无需 key 的 IEEE Computer
+Society CSDL GraphQL 元数据和固定的官方 PDF 路径；发现阶段只产生候选，
+materialize 才下载 PDF、验证身份并冻结事实。ACM CCS/TOPS 走 Crossref，
+不依赖 ACM 私有 key。
 
 安装包固定 `openreview-py>=1.46,<2`；headless 服务器执行
 `python -m pip install .` 即可获得 v2 client 与 v1-compatible client。
@@ -154,6 +157,18 @@ never a fact authority for title, authors, abstract, venue, URLs, or BibTeX.
 
 ### 2026-08-04
 
+- NDSS records whose official detail page omits a DOI/BibTeX export now use a
+  Crossref DOI only after an exact title, first-author, author-set, container,
+  and proceedings-type match; BibTeX still comes from DOI content negotiation.
+  DOI-less CVPR records now retain the official page's inline `bibref` export.
+  Neither route synthesizes a citation from an LLM or incomplete metadata.
+- IEEE S&P now has a no-key IEEE Computer Society CSDL proceedings adapter.
+  It accepts only the registered CSDL proceeding and `sp` article identity,
+  open-access `proceedings` records with a DOI and declared PDF, filters
+  protocol-defined `z`/Roman-numeral front matter (while retaining article
+  classes such as `a` and `b`, plus older numeric FNOs) without consuming the
+  paper budget, and
+  leaves body-byte verification to materialization.
 - Core and broad keyword filtering now normalizes Unicode compatibility forms
   before case-insensitive matching, so equivalent query spellings cannot
   silently change a paper's track eligibility.
@@ -206,6 +221,12 @@ never a fact authority for title, authors, abstract, venue, URLs, or BibTeX.
 - arXiv discovery now obeys the plan's per-source candidate budget even when
   several queries are configured. The collector stops subsequent requests at
   the budget and locally clips a nonconforming API response.
+- Keyword- or date-filtered collection now uses only a bounded, target-sized
+  discovery buffer before script-owned filtering. This prevents early
+  alphabetical or newest-first records from hiding relevant candidates without
+  changing the requested candidate budget or the ten-paper output limit.
+  IEEE Xplore preserves an API-supplied complete publication date, but never
+  invents a day from its publication-year field.
 
 ## 站点
 

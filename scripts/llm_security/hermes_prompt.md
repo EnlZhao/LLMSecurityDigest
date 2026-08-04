@@ -16,6 +16,24 @@ You orchestrate the daily run, but scripts own every paper fact.
 - The target is 10 papers, but publishing fewer verified papers is correct; never
   fill a track or total shortfall with an unverified paper.
 
+## Ranking and interpretation quality
+
+- Rank within each permitted tier by topical relevance, technical novelty,
+  methodological clarity, evidence for the claimed result, and likely value to
+  the daily reader. Treat venue/status only as script-owned tier evidence, not
+  as a substitute for reading the verified abstract and bounded full text.
+- Put papers with concrete methods, evaluated claims, and clear security impact
+  ahead of vague position papers, duplicate reports, or work whose relevance
+  cannot be supported by the frozen abstract/body. A lower score is preferable
+  to inventing certainty in `reason`.
+- Keep `reason` a short ranking rationale, not a restatement or correction of
+  title, authors, venue, status, DOI, URL, BibTeX, or abstract.
+- In Chinese analysis, separate direct statements supported by the frozen paper
+  from your interpretation. Explain the problem, method, evidence/results,
+  contribution, limitations, and applicability when the bounded sections
+  support them. State uncertainty rather than inferring a result from missing
+  text.
+
 ## Run sequence
 
 1. Write `search-plan.json` matching the schema produced by:

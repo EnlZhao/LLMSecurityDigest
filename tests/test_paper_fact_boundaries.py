@@ -1,4 +1,5 @@
 import json
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -6,7 +7,7 @@ from llm_security_digest.papers.http import HttpRequestError, HttpResponse
 from llm_security_digest.papers.http import _safe_url
 from llm_security_digest.papers.headless import HeadlessDiscoveryError, _normalized_allowed_hosts
 from llm_security_digest.papers.models import PaperFacts, SearchPlan, SelectionEntry, get_venue_spec
-from llm_security_digest.papers.openreview_client import openreview_failure_stage
+from llm_security_digest.papers.openreview_client import openreview_error_message, openreview_failure_stage
 from llm_security_digest.papers import pipeline
 from llm_security_digest.papers.official import _pdf_url, _tree
 from llm_security_digest.papers.sources import (
@@ -59,6 +60,154 @@ def test_keyword_matching_normalizes_unicode_without_changing_fact_fields() -> N
 
     assert pipeline._matches_keywords(paper, ["fullwidth cafe\u0301"])
     assert not pipeline._matches_keywords(paper, ["different topic"])
+
+
+def test_collect_uses_a_bounded_discovery_buffer_before_keyword_filtering(monkeypatch) -> None:
+    papers = [
+        _paper(paper_id="arxiv:noise-1", source="arxiv", source_id="noise-1", title="Noise one", authors=["Alice Example"]),
+        _paper(paper_id="arxiv:noise-2", source="arxiv", source_id="noise-2", title="Noise two", authors=["Alice Example"]),
+        _paper(paper_id="arxiv:target", source="arxiv", source_id="target", title="Target paper", authors=["Alice Example"]),
+    ]
+    seen_limits: list[tuple[int, int]] = []
+
+    class _Arxiv:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def discover_result(self, plan):
+            seen_limits.append((plan.max_results_per_query, plan.max_results_per_venue))
+            return type("Result", (), {"papers": papers[:plan.max_results_per_venue], "incomplete": [], "reports": []})()
+
+    monkeypatch.setattr(pipeline, "ArxivSource", _Arxiv)
+    payload = pipeline.collect(SearchPlan(
+        queries=["security"], sources=["arxiv"], filter_keywords=["target"],
+        max_results_per_query=2, max_results_per_venue=2, target=1,
+    ))
+
+    assert seen_limits == [(3, 3)]
+    assert [paper["paper_id"] for paper in payload["candidates"]] == ["arxiv:target"]
+    assert payload["discovery_limits"] == {
+        "requested_max_results_per_query": 2,
+        "requested_max_results_per_venue": 2,
+        "used_max_results_per_query": 3,
+        "used_max_results_per_venue": 3,
+        "filtering_buffer": True,
+    }
+
+
+def test_discovery_plan_does_not_claim_a_buffer_after_hard_caps() -> None:
+    plan = SearchPlan(
+        queries=["security"], filter_keywords=["target"], target=10,
+        max_results_per_query=1000, max_results_per_venue=5000,
+    )
+
+    assert pipeline._discovery_plan(plan) is plan
+
+
+def test_selection_entries_require_the_declared_bounded_schema(tmp_path) -> None:
+    path = tmp_path / "selection.json"
+    base = {
+        "paper_id": "crossref:one",
+        "score": 1.0,
+        "category": "Security",
+        "reason": "ranked",
+        "track": "core",
+    }
+
+    path.write_text(json.dumps({"selections": [base]}), encoding="utf-8")
+    assert SelectionEntry.load_many(path)[0].paper_id == "crossref:one"
+
+    for field in base:
+        missing = dict(base)
+        del missing[field]
+        path.write_text(json.dumps({"selections": [missing]}), encoding="utf-8")
+        with pytest.raises(ValueError, match="missing required fields"):
+            SelectionEntry.load_many(path)
+
+
+@pytest.mark.parametrize("score", [True, "1", float("nan"), float("inf"), float("-inf")])
+def test_selection_scores_must_be_finite_numbers(tmp_path, score) -> None:
+    path = tmp_path / "selection.json"
+    value = {
+        "paper_id": "crossref:one",
+        "score": score,
+        "category": "Security",
+        "reason": "ranked",
+        "track": "core",
+    }
+
+    path.write_text(json.dumps({"selections": [value]}), encoding="utf-8")
+    with pytest.raises(ValueError, match="finite number"):
+        SelectionEntry.load_many(path)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("paper_id", 1),
+        ("category", 1),
+        ("reason", 1),
+        ("track", 1),
+        ("paper_id", "x" * 321),
+        ("category", "x" * 161),
+        ("reason", "x" * 2001),
+    ),
+)
+def test_selection_string_fields_are_typed_and_bounded(tmp_path, field, value) -> None:
+    path = tmp_path / "selection.json"
+    selection = {
+        "paper_id": "crossref:one",
+        "score": 1.0,
+        "category": "Security",
+        "reason": "ranked",
+        "track": "core",
+    }
+    selection[field] = value
+
+    path.write_text(json.dumps({"selections": [selection]}), encoding="utf-8")
+    with pytest.raises(ValueError):
+        SelectionEntry.load_many(path)
+
+
+def test_selection_array_is_bounded(tmp_path) -> None:
+    path = tmp_path / "selection.json"
+    selections = [
+        {
+            "paper_id": f"crossref:{index}",
+            "score": 1.0,
+            "category": "Security",
+            "reason": "ranked",
+            "track": "core",
+        }
+        for index in range(101)
+    ]
+
+    path.write_text(json.dumps({"selections": selections}), encoding="utf-8")
+    with pytest.raises(ValueError, match="more than 100 entries"):
+        SelectionEntry.load_many(path)
+
+
+def test_openreview_failure_message_redacts_challenge_urls() -> None:
+    message = openreview_error_message(Exception(
+        "Challenge verification required (2026-08-04-709430): https://openreview.net/challenge?redirect=https%3A%2F%2Fapi2.openreview.net%2Fnotes, 'reqId': 'transient-123'"
+    ))
+
+    assert "Challenge verification required" in message
+    assert "openreview.net" not in message
+    assert "api2.openreview.net" not in message
+    assert "transient-123" not in message
+    assert "2026-08-04-709430" not in message
+    assert "<redacted-url>" in message
+    assert "Challenge verification required (<redacted>)" in message
+    assert "'reqId': '<redacted>'" in message
+
+
+def test_optional_ieee_xplore_runs_only_after_no_key_sources_and_arxiv() -> None:
+    sources = ["ieee_xplore", "arxiv", "crossref", "openreview", "official"]
+
+    assert sorted(sources, key=lambda source: pipeline._COLLECTION_SOURCE_PRIORITY.get(source, 4)) == [
+        "official", "crossref", "openreview", "arxiv", "ieee_xplore",
+    ]
 
 
 def test_pmlr_raw_pdf_path_requires_matching_volume() -> None:
@@ -642,6 +791,77 @@ def test_ieee_missing_abstract_or_pdf_stays_incomplete(missing) -> None:
     assert papers == []
     assert incomplete[0]["reason"] == "required_ieee_field_missing"
     assert missing in incomplete[0]["missing"]
+
+
+@pytest.mark.parametrize("value", ["2026-01-02", "02 January 2026", "January 2, 2026"])
+def test_ieee_uses_only_an_explicit_complete_publication_date(value) -> None:
+    article = _ieee_article()
+    article["publication_date"] = value
+
+    papers, incomplete, _stats = IeeeXploreSource.parse_articles(
+        _ieee_response(article), spec=get_venue_spec("ieee-sp")
+    )
+
+    assert incomplete == []
+    assert papers[0].published_at == "2026-01-02T00:00:00Z"
+
+
+def test_ieee_year_is_not_promoted_to_a_publication_day() -> None:
+    article = _ieee_article()
+    article["publication_year"] = "2026"
+
+    papers, incomplete, _stats = IeeeXploreSource.parse_articles(
+        _ieee_response(article), spec=get_venue_spec("ieee-sp")
+    )
+
+    assert incomplete == []
+    assert papers[0].published_at is None
+
+
+def test_ieee_discovery_pages_requests_above_api_record_cap() -> None:
+    class _PagingClient:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def get(self, url: str, **_kwargs) -> HttpResponse:
+            self.calls.append(url)
+            params = parse_qs(urlparse(url).query)
+            start = int(params["start_record"][0])
+            limit = int(params["max_records"][0])
+            assert start in {1, 101}
+            articles = []
+            for index in range(start, min(start + limit, 111)):
+                article = _ieee_article()
+                article.update({
+                    "doi": f"10.1109/SP.2026.{index:07d}",
+                    "title": f"IEEE authoritative title {index}",
+                    "article_number": str(1230000 + index),
+                    "html_url": f"https://ieeexplore.ieee.org/document/{1230000 + index}",
+                    "pdf_url": f"https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber={1230000 + index}",
+                })
+                articles.append(article)
+            return HttpResponse(
+                url=url,
+                final_url=url,
+                status=200,
+                headers={},
+                body=json.dumps({"articles": articles}).encode(),
+            )
+
+    client = _PagingClient()
+    result = IeeeXploreSource(client, api_key="test-key").discover_result(SearchPlan(
+        queries=["security"],
+        sources=["ieee_xplore"],
+        venue_groups=["ieee-sp"],
+        max_results_per_query=110,
+        max_results_per_venue=110,
+    ))
+
+    assert len(result.papers) == 110
+    assert [int(parse_qs(urlparse(url).query)["max_records"][0]) for url in client.calls] == [100, 10]
+    assert [int(parse_qs(urlparse(url).query)["start_record"][0]) for url in client.calls] == [1, 101]
+    assert result.reports[0]["records_scanned"] == 110
+    assert result.reports[0]["records_valid"] == 110
 
 
 def test_missing_bibtex_is_rejected_before_materialization(monkeypatch, tmp_path) -> None:

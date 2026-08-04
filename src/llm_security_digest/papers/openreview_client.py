@@ -110,8 +110,22 @@ def openreview_error_message(exc: Exception) -> str:
         secret = os.getenv(key, "")
         if secret:
             message = message.replace(secret, "<redacted>")
-    return re.sub(
+    message = re.sub(
         r"([?&](?:password|username|token|secret|api[_-]?key)=)[^&\s]+",
+        r"\1<redacted>",
+        re.sub(r"https?://[^\s'\"}]+", "<redacted-url>", message),
+        flags=re.IGNORECASE,
+    )
+    message = re.sub(
+        r"(challenge verification required\s*\()\s*(?:19|20)\d{2}-\d{2}-\d{2}-[A-Za-z0-9._-]+(\))",
+        r"\1<redacted>\2",
+        message,
+        flags=re.IGNORECASE,
+    )
+    # Challenge providers may attach opaque request identifiers. They are not
+    # useful in durable source reports and should not become replay inputs.
+    return re.sub(
+        r"((?:['\"])?(?:req(?:uest)?[_-]?id|challenge[_-]?id)(?:['\"])?\s*[:=]\s*['\"]?)[^,'\"}\s]+",
         r"\1<redacted>",
         message,
         flags=re.IGNORECASE,

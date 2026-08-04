@@ -7,12 +7,13 @@ the incomplete queue instead of turning them into facts.
 from __future__ import annotations
 
 import html
+import json
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Any, Callable, Iterable
-from urllib.parse import quote_plus, urljoin, urlparse
+from urllib.parse import quote_plus, urlencode, urljoin, urlparse
 
 from .http import HttpClient, HttpResponse
 from .models import DiscoveryResult, PaperFacts, SearchPlan, VenueSpec, normalize_doi, normalize_title, utc_now
@@ -29,6 +30,11 @@ _OFFICIAL_PDF_HOSTS = {
     "ndss": frozenset({"www.ndss-symposium.org"}),
     "cvpr": frozenset({"openaccess.thecvf.com"}),
     "eccv": frozenset({"www.ecva.net"}),
+    # CSDL's stable download endpoint lives on ``www.computer.org``.  The
+    # endpoint may redirect to a short-lived signed object on the explicit
+    # IEEE Computer Society download host; that host is accepted only while
+    # verifying the response, never emitted as the candidate PDF URL.
+    "ieee-sp": frozenset({"www.computer.org"}),
 }
 
 _DOI_RE = re.compile(r"^10\.\d{4,9}/[-._;()/:A-Z0-9]+$", re.IGNORECASE)
@@ -269,7 +275,7 @@ def _bibtex_inline(root: _Node) -> str:
     for node in root.descendants():
         node_id = node.attrs.get("id", "").casefold()
         classes = {item.casefold() for item in node.attrs.get("class", "").split()}
-        if node_id != "bibtex" and not classes.intersection({"bibtex-text-entry", "bibtex", "citation-bibtex", "citecode"}):
+        if node_id != "bibtex" and not classes.intersection({"bibtex-text-entry", "bibtex", "citation-bibtex", "citecode", "bibref"}):
             continue
         text = node.text().strip()
         if text.startswith("@"):
@@ -474,14 +480,17 @@ class OfficialAdapter:
         urls: list[str],
         truncated: bool = False,
         budget_exhausted: bool = False,
+        records_scanned: int | None = None,
+        records_filtered: int = 0,
+        raw_scan_cap: int | None = None,
     ) -> dict[str, Any]:
         status = "error" if errors and not parsed else "partial" if errors or incomplete else "ok"
         request_urls = sorted(set(urls))
         records_incomplete = len(incomplete)
-        records_scanned = parsed + records_incomplete
+        scanned = parsed + records_incomplete if records_scanned is None else max(int(records_scanned), 0)
         requests_attempted = len(request_urls)
         requests_succeeded = min(max(int(fetched), 0), requests_attempted)
-        return {
+        report = {
             "source": "official",
             "adapter": self.adapter,
             "venue_group": spec.key,
@@ -491,16 +500,16 @@ class OfficialAdapter:
             # describe records and successful requests respectively; the
             # explicit request/record fields remove any ambiguity for
             # observability and replay.
-            "scanned": records_scanned,
+            "scanned": scanned,
             "fetched": requests_succeeded,
             "parsed": parsed,
-            "filtered": 0,
+            "filtered": max(int(records_filtered), 0),
             "truncated": bool(truncated),
             "budget_exhausted": bool(budget_exhausted or truncated),
             "incomplete": records_incomplete,
-            "records_scanned": records_scanned,
+            "records_scanned": scanned,
             "records_valid": parsed,
-            "records_filtered": 0,
+            "records_filtered": max(int(records_filtered), 0),
             "records_incomplete": records_incomplete,
             "requests_attempted": requests_attempted,
             "requests_succeeded": requests_succeeded,
@@ -508,6 +517,9 @@ class OfficialAdapter:
             "errors": errors,
             "urls": request_urls,
         }
+        if raw_scan_cap is not None:
+            report["raw_scan_cap"] = max(int(raw_scan_cap), 0)
+        return report
 
     @staticmethod
     def _error(url: str, exc: Exception) -> dict[str, Any]:
@@ -1778,6 +1790,494 @@ class NDSSAdapter(OfficialAdapter):
         return DiscoveryResult(papers, incomplete, [self._report(spec, years=years, fetched=fetched, parsed=len(papers), incomplete=incomplete, errors=errors, urls=urls, truncated=len(papers) >= plan.max_results_per_venue)])
 
 
+class IEEEComputerCSDLAdapter(OfficialAdapter):
+    """Anonymous IEEE Computer Society CSDL adapter for IEEE S&P proceedings.
+
+    CSDL article pages are an Angular shell, so discovery and refresh use the
+    public GraphQL metadata endpoint.  Discovery accepts only authoritative
+    article metadata and a fixed, source-derived PDF route; materialization
+    downloads and identity-checks the PDF bytes.
+    """
+
+    adapter = "ieee_csdl"
+    GROUP_ID = "1000646"
+    GRAPHQL_URL = "https://www.computer.org/csdl/api/v1/graphql"
+    PDF_URL_TEMPLATE = "https://www.computer.org/csdl/pds/api/csdl/proceedings/download-article/{article_id}/pdf"
+    GRAPHQL_HOSTS = frozenset({"www.computer.org"})
+    PDF_HOSTS = frozenset({"www.computer.org", "csdl-downloads.ieeecomputer.org"})
+    # CSDL proceedings can place front matter before and between article
+    # records.  Keep raw enumeration bounded independently of the requested
+    # candidate count; the cap protects a malformed or unexpectedly large TOC.
+    RAW_SCAN_CAP = 1000
+    ARTICLE_COMPONENT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+    PREFIX_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]*\Z")
+    # CSDL uses two verified proceedings FNO forms: a purely numeric article
+    # number in older years, or a numeric prefix, document-class letter, and
+    # numeric suffix. ``z`` and older Roman-numeral suffixes are front matter;
+    # article classes such as ``a`` and ``b`` remain eligible for detail
+    # validation.
+    FNO_FRONT_MATTER_RE = re.compile(r"^[0-9]+(?:z[0-9]+|[ivxlcdm]+)$", re.IGNORECASE)
+    FNO_PAPER_RE = re.compile(r"^(?:[0-9]+|[0-9]+[a-y][0-9]+)$", re.IGNORECASE)
+    SOURCE_ID_RE = re.compile(
+        r"((?:19|20)\d{2}):(sp):((?:[0-9]+|[0-9]+[a-y][0-9]+)):([A-Za-z0-9][A-Za-z0-9._-]+)\Z"
+    )
+    PROCEEDINGS_QUERY = """
+      query ($groupId: String) {
+        proceedings(groupId: $groupId) {
+          id acronym title volume displayVolume year
+        }
+      }
+    """
+    TOC_QUERY = """
+      query ($proceedingId: String!, $limitResults: Int, $skipResults: Int) {
+        proceeding: proceeding(proceedingId: $proceedingId) {
+          id groupId acronym issn isbn startDate endDate location website
+          title volume displayVolume year
+        }
+        articlesByProceeding: articlesByProceedingWithPagination(
+          proceedingId: $proceedingId
+          limit: $limitResults
+          skip: $skipResults
+        ) {
+          limit skipped totalResults
+          articleResults {
+            id pubType pubDate doi idPrefix
+            authors { fullName givenName surname }
+            fno isOpenAccess issueNum pages sectionTitle title year
+          }
+        }
+      }
+    """
+    ARTICLE_QUERY = """
+      query ($articleId: String!) {
+        proceeding: proceedingByArticleId(articleId: $articleId) {
+          id title acronym groupId volume displayVolume year
+        }
+        article: articleById(articleId: $articleId) {
+          id doi title normalizedTitle abstract
+          abstracts { abstractType content }
+          normalizedAbstract fno
+          authors { affiliation fullName givenName surname }
+          idPrefix isOpenAccess showRecommendedArticles showBuyMe hasPdf
+          pubDate pubType pages year issn isbn notes notesType amsId
+        }
+      }
+    """
+
+    @staticmethod
+    def _component(value: Any, *, prefix: bool = False) -> str:
+        text = _clean(value)
+        pattern = IEEEComputerCSDLAdapter.PREFIX_RE if prefix else IEEEComputerCSDLAdapter.ARTICLE_COMPONENT_RE
+        return text if pattern.fullmatch(text) else ""
+
+    @classmethod
+    def parse_source_id(cls, source_id: str) -> tuple[int, str, str, str]:
+        match = cls.SOURCE_ID_RE.fullmatch(str(source_id or "").strip())
+        if not match:
+            raise ValueError("invalid IEEE CSDL source id")
+        return int(match.group(1)), match.group(2), match.group(3), match.group(4)
+
+    @classmethod
+    def article_url(cls, source_id: str) -> str:
+        year, prefix, fno, article_id = cls.parse_source_id(source_id)
+        return f"https://www.computer.org/csdl/proceedings-article/{prefix}/{year}/{fno}/{article_id}"
+
+    @classmethod
+    def pdf_url(cls, article_id: str) -> str:
+        value = cls._component(article_id)
+        if not value:
+            raise ValueError("invalid IEEE CSDL article id")
+        return cls.PDF_URL_TEMPLATE.format(article_id=value)
+
+    def _graphql(self, query: str, variables: dict[str, Any]) -> tuple[dict[str, Any], HttpResponse]:
+        encoded = urlencode({
+            "query": query,
+            "variables": json.dumps(variables, separators=(",", ":"), sort_keys=True),
+        })
+        url = f"{self.GRAPHQL_URL}?{encoded}"
+        response = self.client.get(
+            url,
+            min_interval=0.2,
+            max_bytes=20 * 1024 * 1024,
+            allowed_hosts=self.GRAPHQL_HOSTS,
+        )
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError("IEEE CSDL GraphQL response is not an object")
+        errors = payload.get("errors")
+        if errors:
+            raise ValueError("IEEE CSDL GraphQL response contains errors")
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            raise ValueError("IEEE CSDL GraphQL response has no data object")
+        return data, response
+
+    @staticmethod
+    def _text(value: Any) -> str:
+        if isinstance(value, str):
+            value = re.sub(r"<[^>]+>", " ", value)
+        return _clean(html.unescape(str(value or "")))
+
+    @classmethod
+    def _authors_from_article(cls, article: dict[str, Any]) -> list[str]:
+        values: list[str] = []
+        raw = article.get("authors")
+        if not isinstance(raw, list):
+            return values
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            value = cls._text(item.get("fullName"))
+            if not value:
+                given = cls._text(item.get("givenName"))
+                surname = cls._text(item.get("surname"))
+                value = " ".join(part for part in (given, surname) if part)
+            if value:
+                values.append(value)
+        return values
+
+    @classmethod
+    def _abstract_from_article(cls, article: dict[str, Any]) -> str:
+        for value in (article.get("abstract"), article.get("normalizedAbstract")):
+            text = cls._text(value)
+            if text:
+                return _strip_abstract_label(text)
+        abstracts = article.get("abstracts")
+        if isinstance(abstracts, list):
+            for item in abstracts:
+                if isinstance(item, dict):
+                    text = cls._text(item.get("content"))
+                    if text:
+                        return _strip_abstract_label(text)
+        return ""
+
+    @staticmethod
+    def _published_at(value: Any) -> str | None:
+        text = _clean(value)
+        if not text:
+            return None
+        if re.fullmatch(r"(?:19|20)\d{2}-\d{2}-\d{2}(?:[T ][0-9:.+-]+Z?)?", text):
+            try:
+                parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                return parsed.isoformat().replace("+00:00", "Z")
+            except ValueError:
+                pass
+        return _iso_date(text)
+
+    @classmethod
+    def _source_id_from_article(cls, article: dict[str, Any], *, fallback_year: int | None = None) -> str:
+        article_id = cls._component(article.get("id"))
+        prefix = cls._component(article.get("idPrefix"), prefix=True)
+        fno = cls._component(article.get("fno"))
+        raw_year = article.get("year") or fallback_year
+        try:
+            year = int(raw_year)
+        except (TypeError, ValueError):
+            year = 0
+        if not re.fullmatch(r"(?:19|20)\d{2}", str(year)) or not prefix or not fno or not article_id:
+            return ""
+        source_id = f"{year}:{prefix}:{fno}:{article_id}"
+        return source_id if cls.FNO_PAPER_RE.fullmatch(fno) and cls.SOURCE_ID_RE.fullmatch(source_id) else ""
+
+    @classmethod
+    def _is_front_matter(cls, article: dict[str, Any]) -> bool:
+        """Identify CSDL front matter from document type and FNO grammar.
+
+        The section code is part of CSDL's authoritative FNO, so this does
+        not rely on a title or a particular article identifier.  Numeric FNOs
+        used by older proceedings are intentionally retained as candidates.
+        """
+        if cls._text(article.get("pubType")).casefold() != "proceedings":
+            return False
+        return bool(cls.FNO_FRONT_MATTER_RE.fullmatch(cls._text(article.get("fno"))))
+
+    @classmethod
+    def _pdf_verification(cls, response: HttpResponse) -> dict[str, Any]:
+        final_url = response.final_url or response.url
+        parsed = urlparse(final_url)
+        content_type = ""
+        for key, value in response.headers.items():
+            if key.casefold() == "content-type":
+                content_type = str(value)
+                break
+        return {
+            "source_url": response.url,
+            "status": response.status,
+            "host": (parsed.hostname or "").casefold().rstrip("."),
+            "content_type": content_type,
+            "response_sha256": response.sha256,
+            # CSDL redirects to a short-lived signed download URL.  Do not
+            # persist that URL or its query string in candidates/provenance.
+            "redirect_count": len(response.redirect_chain),
+            "verified_pdf": (
+                200 <= response.status < 300
+                and parsed.scheme.casefold() == "https"
+                and (parsed.hostname or "").casefold().rstrip(".") in cls.PDF_HOSTS
+                and response.body.startswith(b"%PDF-")
+            ),
+        }
+
+    def _verify_pdf(self, article_id: str) -> tuple[str, HttpResponse, dict[str, Any]]:
+        fixed_url = self.pdf_url(article_id)
+        response = self.client.get(
+            fixed_url,
+            min_interval=0.2,
+            max_bytes=25 * 1024 * 1024,
+            allowed_hosts=self.PDF_HOSTS,
+        )
+        verification = self._pdf_verification(response)
+        if not verification["verified_pdf"]:
+            raise ValueError("official_pdf_access_gated")
+        return fixed_url, response, verification
+
+    def _record_from_detail(
+        self,
+        *,
+        spec: VenueSpec,
+        article: dict[str, Any] | None,
+        proceeding: dict[str, Any] | None,
+        response: HttpResponse,
+        expected_source_id: str | None = None,
+        expected_proceeding_id: str | None = None,
+    ) -> ParsedRecord:
+        article = article if isinstance(article, dict) else {}
+        proceeding = proceeding if isinstance(proceeding, dict) else {}
+        fallback_year = int(proceeding.get("year")) if str(proceeding.get("year", "")).isdigit() else None
+        source_id = self._source_id_from_article(article, fallback_year=fallback_year)
+        article_id = self._component(article.get("id"))
+        if not source_id or (expected_source_id and source_id != expected_source_id):
+            return ParsedRecord(incomplete=_incomplete(
+                spec,
+                adapter=self.adapter,
+                source_id=expected_source_id or source_id or article_id or "unknown",
+                landing_url=self.article_url(expected_source_id) if expected_source_id else "https://www.computer.org/csdl/proceedings",
+                reason="official_identity_mismatch",
+                missing=["source_id"],
+                partial={"article_id": article_id, "source_id": source_id},
+            ))
+        source_year, _source_prefix, _source_fno, _source_article_id = self.parse_source_id(source_id)
+        landing_url = self.article_url(source_id)
+        proceeding_id = self._component(proceeding.get("id"))
+        proceeding_group_id = self._text(proceeding.get("groupId"))
+        proceeding_acronym = self._text(proceeding.get("acronym")).casefold()
+        proceeding_year = proceeding.get("year")
+        if (
+            not proceeding_id
+            or proceeding_group_id != self.GROUP_ID
+            or proceeding_acronym != "sp"
+            or str(proceeding_year) != str(source_year)
+            or (expected_proceeding_id is not None and proceeding_id != expected_proceeding_id)
+        ):
+            return ParsedRecord(incomplete=_incomplete(
+                spec, adapter=self.adapter, source_id=source_id, landing_url=landing_url,
+                reason="official_identity_mismatch", missing=["source_id"],
+                partial={
+                    "proceeding_id": proceeding_id,
+                    "proceeding_group_id": proceeding_group_id,
+                    "proceeding_acronym": proceeding_acronym,
+                    "proceeding_year": proceeding_year,
+                },
+            ))
+        if self._text(article.get("pubType")).casefold() != "proceedings":
+            return ParsedRecord(incomplete=_incomplete(
+                spec, adapter=self.adapter, source_id=source_id, landing_url=landing_url,
+                reason="official_document_type_invalid", missing=["publication_type"],
+                partial={"pub_type": self._text(article.get("pubType"))},
+            ))
+        if article.get("isOpenAccess") is not True:
+            return ParsedRecord(incomplete=_incomplete(
+                spec, adapter=self.adapter, source_id=source_id, landing_url=landing_url,
+                reason="official_pdf_access_gated", missing=["pdf_url"],
+                partial={"title": self._text(article.get("title")), "isOpenAccess": article.get("isOpenAccess"), "hasPdf": article.get("hasPdf")},
+            ))
+        if article.get("hasPdf") is not True:
+            return ParsedRecord(incomplete=_incomplete(
+                spec, adapter=self.adapter, source_id=source_id, landing_url=landing_url,
+                reason="official_pdf_unavailable", missing=["pdf_url"],
+                partial={"title": self._text(article.get("title")), "isOpenAccess": article.get("isOpenAccess"), "hasPdf": article.get("hasPdf")},
+            ))
+        # Discovery stays metadata-only.  Materialization fetches this fixed
+        # URL with the registered redirect hosts, validates the PDF signature,
+        # and checks its first pages against the refreshed title.
+        fixed_pdf_url = self.pdf_url(article_id)
+        doi = normalize_doi(self._text(article.get("doi")))
+        if doi and not _DOI_RE.fullmatch(doi):
+            doi = None
+        if not doi:
+            return ParsedRecord(incomplete=_incomplete(
+                spec, adapter=self.adapter, source_id=source_id, landing_url=landing_url,
+                reason="official_doi_missing", missing=["doi", "bibtex"],
+                partial={"title": self._text(article.get("title"))},
+            ))
+        source_metadata = {
+            "csdl_group_id": proceeding_group_id,
+            "proceeding_id": proceeding_id,
+            "id_prefix": self._text(article.get("idPrefix")),
+            "fno": self._text(article.get("fno")),
+            "is_open_access": True,
+            "has_pdf": True,
+            "pages": self._text(article.get("pages")),
+            "pub_type": self._text(article.get("pubType")),
+            # DOI content negotiation remains the authoritative BibTeX route
+            # for normal IEEE papers.  Keep the fixed CSDL route available to
+            # callers even when a record has no DOI.
+            "pdf_url": fixed_pdf_url,
+        }
+        return _make_paper(
+            spec=spec,
+            adapter=self.adapter,
+            source_id=source_id,
+            title=self._text(article.get("title")),
+            authors=self._authors_from_article(article),
+            abstract=self._abstract_from_article(article),
+            published_at=self._published_at(article.get("pubDate")),
+            landing_url=landing_url,
+            pdf_url=fixed_pdf_url,
+            doi=doi,
+            response=response,
+            source_metadata=source_metadata,
+        )
+
+    def fetch_by_id(self, paper: PaperFacts, spec: VenueSpec) -> PaperFacts:
+        expected_year, expected_prefix, expected_fno, expected_article_id = self.parse_source_id(paper.source_id)
+        data, response = self._graphql(self.ARTICLE_QUERY, {"articleId": expected_article_id})
+        record = self._record_from_detail(
+            spec=spec,
+            article=data.get("article"),
+            proceeding=data.get("proceeding"),
+            response=response,
+            expected_source_id=paper.source_id,
+        )
+        if record.paper is None:
+            reason = (record.incomplete or {}).get("reason", "official identity lookup failed")
+            raise ValueError(str(reason))
+        # The source-id parser above is deliberately repeated after the
+        # GraphQL response so a detail response cannot silently change route
+        # identity during refresh.
+        if (expected_year, expected_prefix, expected_fno, expected_article_id) != self.parse_source_id(record.paper.source_id):
+            raise ValueError("official identity lookup returned no exact match")
+        return record.paper
+
+    def discover(self, plan: SearchPlan, spec: VenueSpec) -> DiscoveryResult:
+        years = _years_for_plan(plan)
+        papers: list[PaperFacts] = []
+        incomplete: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+        urls: list[str] = []
+        fetched = 0
+        scanned = 0
+        filtered = 0
+        try:
+            data, response = self._graphql(self.PROCEEDINGS_QUERY, {"groupId": self.GROUP_ID})
+            fetched += 1
+            urls.append(response.url)
+            rows = data.get("proceedings")
+            if not isinstance(rows, list):
+                raise ValueError("IEEE CSDL proceedings response is not a list")
+        except Exception as exc:
+            errors.append(self._error(self.GRAPHQL_URL, exc))
+            return DiscoveryResult([], [], [self._report(spec, years=years, fetched=fetched, parsed=0, incomplete=[], errors=errors, urls=urls)])
+        proceedings = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            try:
+                year = int(row.get("year"))
+            except (TypeError, ValueError):
+                continue
+            title = self._text(row.get("title"))
+            acronym = self._text(row.get("acronym")).casefold()
+            if year in years and acronym == "sp" and "security and privacy" in title.casefold():
+                proceeding_id = self._component(row.get("id"))
+                if proceeding_id:
+                    proceedings.append((year, proceeding_id))
+        page_size = min(plan.max_results_per_query, 100, plan.max_results_per_venue)
+        for year, proceeding_id in sorted(set(proceedings)):
+            offset = 0
+            while scanned < self.RAW_SCAN_CAP and len(papers) < plan.max_results_per_venue:
+                limit = min(page_size, self.RAW_SCAN_CAP - scanned)
+                try:
+                    data, response = self._graphql(self.TOC_QUERY, {
+                        "proceedingId": proceeding_id,
+                        "limitResults": limit,
+                        "skipResults": offset,
+                    })
+                    fetched += 1
+                    urls.append(response.url)
+                    block = data.get("articlesByProceeding")
+                    if not isinstance(block, dict) or not isinstance(block.get("articleResults"), list):
+                        raise ValueError("IEEE CSDL articles response is malformed")
+                    articles = block["articleResults"]
+                    total = int(block.get("totalResults") or 0)
+                except Exception as exc:
+                    errors.append(self._error(self.GRAPHQL_URL, exc))
+                    break
+                if not articles:
+                    break
+                for summary in articles:
+                    if scanned >= self.RAW_SCAN_CAP or len(papers) >= plan.max_results_per_venue:
+                        break
+                    scanned += 1
+                    if not isinstance(summary, dict):
+                        incomplete.append(_incomplete(
+                            spec, adapter=self.adapter, source_id=f"{year}:sp:unknown:record-{scanned}",
+                            landing_url=f"https://www.computer.org/csdl/proceedings/{self.GROUP_ID}",
+                            reason="official_metadata_malformed", missing=["title", "authors", "abstract", "pdf_url"],
+                        ))
+                        continue
+                    if self._is_front_matter(summary):
+                        filtered += 1
+                        continue
+                    article_id = self._component(summary.get("id"))
+                    try:
+                        detail_data, detail_response = self._graphql(self.ARTICLE_QUERY, {"articleId": article_id})
+                        fetched += 1
+                        urls.append(detail_response.url)
+                        record = self._record_from_detail(
+                            spec=spec,
+                            article=detail_data.get("article"),
+                            proceeding=detail_data.get("proceeding"),
+                            response=detail_response,
+                            expected_source_id=self._source_id_from_article(summary, fallback_year=year) or None,
+                            expected_proceeding_id=proceeding_id,
+                        )
+                        if record.paper:
+                            papers.append(record.paper)
+                        elif record.incomplete:
+                            incomplete.append(record.incomplete)
+                    except Exception as exc:
+                        incomplete.append(_incomplete(
+                            spec, adapter=self.adapter,
+                            source_id=f"{year}:sp:unknown:{article_id or f'record-{scanned}'}",
+                            landing_url=(f"https://www.computer.org/csdl/proceedings-article/sp/{year}/unknown/{article_id}" if article_id else f"https://www.computer.org/csdl/proceedings/{proceeding_id}"),
+                            reason="official_detail_fetch_or_parse_failed",
+                            partial={"error_type": type(exc).__name__, "message": str(exc)[:200]},
+                        ))
+                offset += len(articles)
+                if offset >= total or len(articles) < limit:
+                    break
+        return DiscoveryResult(
+            papers,
+            incomplete,
+            [self._report(
+                spec,
+                years=years,
+                fetched=fetched,
+                parsed=len(papers),
+                incomplete=incomplete,
+                errors=errors,
+                urls=urls,
+                truncated=scanned >= self.RAW_SCAN_CAP or len(papers) >= plan.max_results_per_venue,
+                budget_exhausted=scanned >= self.RAW_SCAN_CAP or len(papers) >= plan.max_results_per_venue,
+                records_scanned=scanned,
+                records_filtered=filtered,
+                raw_scan_cap=self.RAW_SCAN_CAP,
+            )],
+        )
+
+
 ADAPTERS: dict[str, type[OfficialAdapter]] = {
     "acl_anthology": ACLAnthologyAdapter,
     "pmlr": PMLRAdapter,
@@ -1788,4 +2288,5 @@ ADAPTERS: dict[str, type[OfficialAdapter]] = {
     "ijcai": IJCAIAdapter,
     "usenix": USENIXAdapter,
     "ndss": NDSSAdapter,
+    "ieee_csdl": IEEEComputerCSDLAdapter,
 }

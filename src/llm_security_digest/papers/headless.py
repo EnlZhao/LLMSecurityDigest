@@ -73,6 +73,7 @@ def _registered_hosts() -> frozenset[str]:
         # Crossref, IEEE, and PMLR full-text routes.
         "api.crossref.org", "doi.org", "ieeexploreapi.ieee.org",
         "www.ieee-security.org", "raw.githubusercontent.com",
+        "www.computer.org", "csdl-downloads.ieeecomputer.org",
     })
     return frozenset(values)
 
