@@ -13,9 +13,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Any, Callable, Iterable
-from urllib.parse import quote_plus, urlencode, urljoin, urlparse
+from urllib.parse import parse_qsl, quote_plus, urlencode, urljoin, urlparse
 
-from .http import HttpClient, HttpResponse
+from .http import HttpClient, HttpResponse, _secret_query_key
 from .models import DiscoveryResult, PaperFacts, SearchPlan, VenueSpec, normalize_doi, normalize_title, utc_now
 
 
@@ -35,6 +35,19 @@ _OFFICIAL_PDF_HOSTS = {
     # IEEE Computer Society download host; that host is accepted only while
     # verifying the response, never emitted as the candidate PDF URL.
     "ieee-sp": frozenset({"www.computer.org"}),
+}
+
+_OFFICIAL_INDEX_HOSTS = {
+    "acl_anthology": frozenset({"aclanthology.org"}),
+    "pmlr": frozenset({"proceedings.mlr.press"}),
+    "neurips": frozenset({"proceedings.neurips.cc"}),
+    "ecva": frozenset({"www.ecva.net"}),
+    "cvf": frozenset({"openaccess.thecvf.com"}),
+    "aaai_ojs": frozenset({"ojs.aaai.org"}),
+    "ijcai": frozenset({"www.ijcai.org"}),
+    "usenix": frozenset({"www.usenix.org"}),
+    "ndss": frozenset({"www.ndss-symposium.org"}),
+    "ieee_csdl": frozenset({"www.computer.org"}),
 }
 
 _DOI_RE = re.compile(r"^10\.\d{4,9}/[-._;()/:A-Z0-9]+$", re.IGNORECASE)
@@ -460,13 +473,160 @@ def _years_for_plan(plan: SearchPlan) -> list[int]:
 class OfficialAdapter:
     adapter = "official"
 
-    def __init__(self, client: HttpClient):
+    def __init__(self, client: HttpClient, *, route_catalog: Any | None = None):
         self.client = client
+        # The catalog is an optional read-only index.  Adapters still fetch
+        # the selected URL through the normal bounded client and parse the
+        # response using their baseline rules.
+        self.route_catalog = route_catalog
 
-    def _get(self, url: str, *, max_bytes: int = 10 * 1024 * 1024) -> HttpResponse:
-        hostname = urlparse(url).hostname
-        allowed_hosts = {hostname} if hostname else None
-        return self.client.get(url, min_interval=0.2, max_bytes=max_bytes, allowed_hosts=allowed_hosts)
+    def _route_hint(
+        self,
+        spec: VenueSpec | None,
+        *,
+        route_kind: str | None,
+        source: str = "official",
+        fallback_url: str | None = None,
+    ) -> str | None:
+        if self.route_catalog is None or spec is None or not route_kind:
+            return None
+        try:
+            routes = self.route_catalog.verified_routes(venue=spec)
+        except Exception:
+            return None
+        expected_adapter = self.adapter.casefold()
+        expected_kind = route_kind.casefold()
+        expected_source = source.casefold()
+        for route in routes:
+            if (
+                str(getattr(route, "source", "")).casefold() == expected_source
+                and str(getattr(route, "adapter", "")).casefold() == expected_adapter
+                and str(getattr(route, "route_kind", "")).casefold() == expected_kind
+                and isinstance(getattr(route, "url", None), str)
+                and self._hint_url_allowed(route.url)
+                and self._hint_path_allowed(route.url, spec=spec, route_kind=route_kind)
+                and self._hint_year_allowed(route.url, fallback_url=fallback_url)
+                and self._hint_scope_allowed(route.url, fallback_url=fallback_url)
+            ):
+                return route.url
+        return None
+
+    def _hint_path_allowed(
+        self,
+        url: str,
+        *,
+        spec: VenueSpec,
+        route_kind: str,
+    ) -> bool:
+        """Apply the adapter's baseline path grammar to an index hint."""
+        if route_kind.casefold() != "index":
+            return True
+        parsed = urlparse(url)
+        path = parsed.path or "/"
+        adapter = self.adapter.casefold()
+        if adapter == "acl_anthology":
+            return bool(re.fullmatch(r"/volumes/(?:19|20)\d{2}\.[A-Za-z0-9][A-Za-z0-9_-]*/?", path))
+        if adapter == "pmlr":
+            return path == "/" and not parsed.query
+        if adapter == "neurips":
+            return bool(re.fullmatch(r"/paper_files/paper/(?:19|20)\d{2}/?", path)) and not parsed.query
+        if adapter == "ecva":
+            return path == "/papers.php" and not parsed.query
+        if adapter == "cvf":
+            code = re.escape(spec.key.upper())
+            return bool(re.fullmatch(rf"/{code}(?:19|20)\d{{2}}", path)) and parsed.query.casefold() == "day=all"
+        if adapter == "aaai_ojs":
+            return path.startswith("/index.php/AAAI/issue/archive")
+        if adapter == "ijcai":
+            return bool(re.fullmatch(r"/proceedings/(?:19|20)\d{2}/?", path)) and not parsed.query
+        if adapter == "usenix":
+            return bool(re.fullmatch(r"/conference/usenixsecurity\d{2}/technical-sessions/?", path)) and not parsed.query
+        if adapter == "ndss":
+            return bool(re.fullmatch(r"/ndss(?:19|20)\d{2}/accepted-papers/?", path)) and not parsed.query
+        return True
+
+    def _hint_url_allowed(self, url: str) -> bool:
+        """Re-check a runtime hint before allowing it to reach the client."""
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").casefold().rstrip(".")
+        if (
+            parsed.scheme.casefold() != "https"
+            or not hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.port is not None
+            or parsed.fragment
+            or hostname not in _OFFICIAL_INDEX_HOSTS.get(self.adapter.casefold(), frozenset())
+        ):
+            return False
+        try:
+            return not any(_secret_query_key(key) for key, _value in parse_qsl(parsed.query, keep_blank_values=True))
+        except ValueError:
+            return False
+
+    @staticmethod
+    def _hint_year_allowed(url: str, *, fallback_url: str | None) -> bool:
+        """Keep a verified year-specific hint scoped to the requested year."""
+        if not fallback_url:
+            return True
+
+        def years(value: str) -> set[str]:
+            parsed = urlparse(value)
+            found = set(re.findall(r"(?:19|20)\d{2}", parsed.path))
+            short = re.findall(r"usenixsecurity(\d{2})", parsed.path, flags=re.IGNORECASE)
+            found.update(f"20{item}" for item in short)
+            return found
+
+        expected = years(fallback_url)
+        candidate = years(url)
+        return not expected or not candidate or bool(expected & candidate)
+
+    @staticmethod
+    def _hint_scope_allowed(url: str, *, fallback_url: str | None) -> bool:
+        """Keep volume/pagination-specific index hints on their own scope."""
+        if not fallback_url:
+            return True
+        fallback = urlparse(fallback_url)
+        candidate = urlparse(url)
+        if fallback.query and fallback.query != candidate.query:
+            return False
+        fallback_volume = re.search(r"/volumes/([^/]+)/?", fallback.path)
+        candidate_volume = re.search(r"/volumes/([^/]+)/?", candidate.path)
+        if fallback_volume and candidate_volume:
+            return fallback_volume.group(1).casefold() == candidate_volume.group(1).casefold()
+        return True
+
+    def _get(
+        self,
+        url: str,
+        *,
+        max_bytes: int = 10 * 1024 * 1024,
+        spec: VenueSpec | None = None,
+        route_kind: str | None = None,
+    ) -> HttpResponse:
+        def fetch(target: str) -> HttpResponse:
+            hostname = urlparse(target).hostname
+            allowed_hosts = {hostname} if hostname else None
+            return self.client.get(target, min_interval=0.2, max_bytes=max_bytes, allowed_hosts=allowed_hosts)
+
+        hinted = self._route_hint(
+            spec,
+            route_kind=route_kind,
+            source="official",
+            fallback_url=url,
+        )
+        if hinted and hinted != url:
+            try:
+                return fetch(hinted)
+            except Exception as hinted_error:
+                # A catalog row is only an index hint.  A stale or temporarily
+                # blocked hint must never make baseline discovery dependent on
+                # the runtime database.
+                try:
+                    return fetch(url)
+                except Exception as fallback_error:
+                    raise fallback_error from hinted_error
+        return fetch(url)
 
     def _report(
         self,
@@ -586,7 +746,7 @@ class ACLAnthologyAdapter(OfficialAdapter):
                 volume_url = f"https://aclanthology.org/volumes/{year}.{volume_key}/"
                 urls.append(volume_url)
                 try:
-                    volume_response = self._get(volume_url)
+                    volume_response = self._get(volume_url, spec=spec, route_kind="index")
                     fetched += 1
                     paper_urls = self.volume_paper_urls(volume_response.text(), year=year, volume_key=volume_key)
                 except Exception as exc:
@@ -688,7 +848,7 @@ class PMLRAdapter(OfficialAdapter):
         urls = ["https://proceedings.mlr.press/"]
         fetched = 0
         try:
-            index_response = self._get(urls[0])
+            index_response = self._get(urls[0], spec=spec, route_kind="index")
             fetched += 1
             volumes = [item for item in self.volume_index(index_response.text()) if item["year"] in years]
         except Exception as exc:
@@ -875,7 +1035,7 @@ class NeurIPSAdapter(OfficialAdapter):
             index_url = self.index_url(year)
             urls.append(index_url)
             try:
-                response = self._get(index_url)
+                response = self._get(index_url, spec=spec, route_kind="index")
                 fetched += 1
                 paper_urls = self.paper_urls(response.text(), year=year)
             except Exception as exc:
@@ -1088,7 +1248,7 @@ class ECVAAdapter(OfficialAdapter):
         urls = [index_url]
         fetched = 0
         try:
-            response = self._get(index_url)
+            response = self._get(index_url, spec=spec, route_kind="index")
             fetched += 1
             index_html = response.text()
         except Exception as exc:
@@ -1199,7 +1359,7 @@ class CVFAdapter(OfficialAdapter):
 
     def discover(self, plan: SearchPlan, spec: VenueSpec) -> DiscoveryResult:
         if _is_ecva_spec(spec):
-            return ECVAAdapter(self.client).discover(plan, spec)
+            return ECVAAdapter(self.client, route_catalog=self.route_catalog).discover(plan, spec)
         years = _years_for_plan(plan)
         papers: list[PaperFacts] = []
         incomplete: list[dict[str, Any]] = []
@@ -1210,7 +1370,7 @@ class CVFAdapter(OfficialAdapter):
             index_url = self.index_url(spec, year)
             urls.append(index_url)
             try:
-                response = self._get(index_url)
+                response = self._get(index_url, spec=spec, route_kind="index")
                 fetched += 1
                 paper_urls = self.paper_urls(response.text(), spec=spec, year=year)
             except Exception as exc:
@@ -1361,7 +1521,7 @@ class AAAIOJSAdapter(OfficialAdapter):
             seen_archive_urls.add(archive_url)
             urls.append(archive_url)
             try:
-                response = self._get(archive_url)
+                response = self._get(archive_url, spec=spec, route_kind="index")
                 fetched += 1
                 page_entries = self.issue_page_entries(response.text(), base_url=archive_url)
             except Exception as exc:
@@ -1555,7 +1715,7 @@ class IJCAIAdapter(OfficialAdapter):
             list_url = f"https://www.ijcai.org/proceedings/{year}/"
             urls.append(list_url)
             try:
-                response = self._get(list_url)
+                response = self._get(list_url, spec=spec, route_kind="index")
                 fetched += 1
                 def load_detail(url: str) -> tuple[str, HttpResponse | None]:
                     nonlocal fetched
@@ -1671,7 +1831,7 @@ class USENIXAdapter(OfficialAdapter):
             list_url = f"https://www.usenix.org/conference/usenixsecurity{int(year) % 100:02d}/technical-sessions"
             urls.append(list_url)
             try:
-                response = self._get(list_url)
+                response = self._get(list_url, spec=spec, route_kind="index")
                 fetched += 1
                 paper_urls = self.presentation_urls(response.text(), year=year, base_url=list_url)
             except Exception as exc:
@@ -1767,7 +1927,7 @@ class NDSSAdapter(OfficialAdapter):
             list_url = f"https://www.ndss-symposium.org/ndss{year}/accepted-papers/"
             urls.append(list_url)
             try:
-                response = self._get(list_url)
+                response = self._get(list_url, spec=spec, route_kind="index")
                 fetched += 1
                 paper_urls = self.paper_urls(response.text(), base_url=list_url)
             except Exception as exc:

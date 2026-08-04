@@ -104,7 +104,9 @@ def command_collect(args: argparse.Namespace) -> int:
     evolution_health = evolution_store.health_check()
     active = evolution_store.load_active()
     plan = apply_overlay(plan, active.get("overlay", {}))
-    payload = collect(plan)
+    # Collection may consult only previously verified route metadata.  The
+    # adapters still fetch and parse every selected hint through HttpClient.
+    payload = collect(plan, route_catalog=RouteCatalog(_data_dir(args.data_dir)))
     payload["evolution"] = {
         "active_version": active.get("version", "baseline"),
         "health_check": evolution_health,

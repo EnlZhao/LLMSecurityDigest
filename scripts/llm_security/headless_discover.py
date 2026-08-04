@@ -18,6 +18,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from llm_security_digest.papers.headless import HeadlessDiscovery, HeadlessDiscoveryError
+from llm_security_digest.route_catalog import RouteCatalog
 
 
 def main() -> int:
@@ -29,6 +30,12 @@ def main() -> int:
         action="store_true",
         help="capture bounded raw HTML/JSON/PDF response bytes and provenance",
     )
+    parser.add_argument("--venue", help="registered venue context for route-catalog persistence")
+    parser.add_argument("--source", default="official", help="registered route source (used with --venue)")
+    parser.add_argument("--adapter", help="registered adapter (used with --venue)")
+    parser.add_argument("--route-kind", default="index", help="route kind to persist (used with --venue)")
+    parser.add_argument("--evidence-source", default="browser", help="provenance label for persisted route metadata")
+    parser.add_argument("--data-dir", type=Path, help="runtime directory containing route_catalog.sqlite3")
     args = parser.parse_args()
     if args.out.name.casefold() == "facts.json":
         print("headless output path cannot be facts.json", file=sys.stderr)
@@ -36,7 +43,23 @@ def main() -> int:
     try:
         request = json.loads(args.input.read_text(encoding="utf-8"))
         discovery = HeadlessDiscovery()
-        result = discovery.collect_raw(request) if args.raw else discovery.collect(request)
+        route_context = None
+        if args.venue:
+            route_context = {
+                "venue": args.venue,
+                "source": args.source,
+                "adapter": args.adapter,
+                "route_kind": args.route_kind,
+                "evidence_source": args.evidence_source,
+            }
+        elif args.adapter or args.route_kind != "index" or args.source != "official":
+            raise HeadlessDiscoveryError("--venue is required for route-catalog metadata")
+        route_catalog = RouteCatalog(args.data_dir) if route_context is not None else None
+        result = (
+            discovery.collect_raw(request, route_catalog=route_catalog, route_context=route_context)
+            if args.raw
+            else discovery.collect(request, route_catalog=route_catalog, route_context=route_context)
+        )
     except (OSError, ValueError, json.JSONDecodeError, HeadlessDiscoveryError) as exc:
         result = {
             "schema_version": 1,

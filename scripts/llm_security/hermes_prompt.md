@@ -64,6 +64,23 @@ the official client. The browser transport rejects secret-like query parameters,
 unregistered redirect hosts, oversized responses, and timeouts, and it never
 constructs `PaperFacts` or writes `facts.json`.
 
+When browser/Bing discovery finds a usable annual proceedings or other official
+index URL, persist it immediately after the baseline request succeeds:
+
+```bash
+python scripts/llm_security/run_daily.py route-catalog verify \
+  --venue neurips \
+  --url https://proceedings.neurips.cc/paper_files/paper/2025 \
+  --source official --route-kind index --evidence-source hermes \
+  --data-dir "$LLMSD_DATA_DIR"
+```
+
+For a headless request, pass the same registered venue context to
+`headless_discover.py` so the captured response is persisted without a second
+fetch. A route is reusable only when its catalog state is `verified`; the next
+collection may use it as an index hint, but the official adapter still fetches,
+parses, and validates the response. Never treat a catalog row as paper facts.
+
 ## Evolution overlays
 
 Hermes is allowed to propose only strategy changes (queries, filter keywords,

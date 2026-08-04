@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 
 from llm_security_digest.papers.http import HttpResponse
+from llm_security_digest.papers.models import get_venue_spec
+from llm_security_digest.papers.official import NeurIPSAdapter
 from llm_security_digest.route_catalog import RouteCatalog
 
 
@@ -47,6 +49,7 @@ def test_verified_route_persists_metadata_and_is_reusable(tmp_path) -> None:
     assert record.verification_state == "verified"
     assert record.http_status == 200
     assert record.response_hash
+    assert record.adapter == "usenix"
     assert record.first_verified_at == record.last_verified_at
     assert record.evidence_source == "hermes"
     assert client.calls[0][1]["allowed_hosts"] == frozenset({"www.usenix.org"})
@@ -76,6 +79,30 @@ def test_failed_and_unregistered_routes_are_persisted_but_never_reused(tmp_path)
     assert unregistered_client.calls == []
     assert "example.com" in rejected.error_message
     assert len(catalog.list_routes(venue="usenix-security")) == 2
+
+
+def test_official_route_rejects_an_unregistered_adapter_label(tmp_path) -> None:
+    catalog = RouteCatalog(tmp_path)
+    client = FakeClient(HttpResponse(
+        url="https://www.usenix.org/conference/usenixsecurity26/technical-sessions",
+        final_url="https://www.usenix.org/conference/usenixsecurity26/technical-sessions",
+        status=200,
+        headers={},
+        body=b"index",
+    ))
+
+    record = catalog.verify(
+        venue="usenix-security",
+        url="https://www.usenix.org/conference/usenixsecurity26/technical-sessions",
+        source="official",
+        adapter="wrong-adapter",
+        route_kind="index",
+        client=client,
+    )
+
+    assert record.verification_state == "rejected"
+    assert client.calls == []
+    assert "registered venue adapter" in (record.error_message or "")
 
 
 def test_secret_and_private_routes_do_not_escape_data_dir(tmp_path) -> None:
@@ -132,3 +159,117 @@ def test_route_catalog_cli_verify_and_list(monkeypatch, tmp_path, capsys) -> Non
     assert daily.main() == 0
     listed = json.loads(capsys.readouterr().out)
     assert len(listed["routes"]) == 1
+
+
+def test_official_adapter_uses_only_matching_verified_index_hint() -> None:
+    class Hint:
+        source = "official"
+        adapter = "neurips"
+        route_kind = "index"
+        url = "https://proceedings.neurips.cc/paper_files/paper/2025/"
+
+    class Catalog:
+        def verified_routes(self, *, venue):
+            assert venue.key == "neurips"
+            return [Hint()]
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, url, **kwargs):
+            self.calls.append((url, kwargs))
+            return HttpResponse(url=url, final_url=url, status=200, headers={}, body=b"index")
+
+    client = Client()
+    adapter = NeurIPSAdapter(client, route_catalog=Catalog())
+    adapter._get(
+        "https://proceedings.neurips.cc/paper_files/paper/2025",
+        spec=get_venue_spec("neurips"),
+        route_kind="index",
+    )
+    assert client.calls[0][0] == Hint.url
+
+
+def test_official_adapter_falls_back_to_baseline_url_when_hint_fails() -> None:
+    class Hint:
+        source = "official"
+        adapter = "neurips"
+        route_kind = "index"
+        url = "https://proceedings.neurips.cc/paper_files/paper/2025/"
+
+    class Catalog:
+        def verified_routes(self, *, venue):
+            return [Hint()]
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, url, **kwargs):
+            self.calls.append(url)
+            if url == Hint.url:
+                raise RuntimeError("stale route")
+            return HttpResponse(url=url, final_url=url, status=200, headers={}, body=b"index")
+
+    client = Client()
+    adapter = NeurIPSAdapter(client, route_catalog=Catalog())
+    baseline = "https://proceedings.neurips.cc/paper_files/paper/2025"
+    adapter._get(baseline, spec=get_venue_spec("neurips"), route_kind="index")
+    assert client.calls == [Hint.url, baseline]
+
+
+def test_headless_raw_persists_captured_route_without_second_fetch(tmp_path) -> None:
+    from llm_security_digest.papers.headless import HeadlessDiscovery
+
+    class BrowserResponse:
+        status = 200
+        url = "https://proceedings.neurips.cc/paper_files/paper/2025"
+        headers = {"content-type": "text/html"}
+
+        def body(self):
+            return b"<html>index</html>"
+
+    class Page:
+        def goto(self, *_args, **_kwargs):
+            return BrowserResponse()
+
+    class Context:
+        def route(self, *_args):
+            return None
+
+        def new_page(self):
+            return Page()
+
+        def close(self):
+            return None
+
+    class Browser:
+        def new_context(self, **_kwargs):
+            return Context()
+
+        def close(self):
+            return None
+
+    class Playwright:
+        class chromium:
+            @staticmethod
+            def launch(**_kwargs):
+                return Browser()
+
+    class Manager:
+        def start(self):
+            return Playwright()
+
+        def stop(self):
+            return None
+
+    catalog = RouteCatalog(tmp_path)
+    result = HeadlessDiscovery(playwright_factory=lambda: Manager()).collect_raw(
+        {"urls": [BrowserResponse.url]},
+        route_catalog=catalog,
+        route_context={"venue": "neurips", "source": "official", "adapter": "neurips", "route_kind": "index"},
+    )
+    assert result["status"] == "ok"
+    assert result["responses"][0]["route_catalog"]["verification_state"] == "verified"
+    assert len(catalog.verified_routes(venue="neurips")) == 1

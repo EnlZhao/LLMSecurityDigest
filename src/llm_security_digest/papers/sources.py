@@ -877,8 +877,9 @@ class OfficialSource:
 
     name = "official"
 
-    def __init__(self, client: HttpClient):
+    def __init__(self, client: HttpClient, *, route_catalog: Any | None = None):
         self.client = client
+        self.route_catalog = route_catalog
 
     def discover(self, plan: SearchPlan) -> list[PaperFacts]:
         return self.discover_result(plan).papers
@@ -889,7 +890,7 @@ class OfficialSource:
         if spec is None or spec.adapter not in ADAPTERS:
             raise ValueError(f"no official venue adapter for {paper.paper_id}")
         if spec.adapter == "ieee_csdl":
-            return IEEEComputerCSDLAdapter(self.client).fetch_by_id(paper, spec)
+            return IEEEComputerCSDLAdapter(self.client, route_catalog=self.route_catalog).fetch_by_id(paper, spec)
         response = self.client.get(
             canonical_url,
             min_interval=0.2,
@@ -921,7 +922,7 @@ class OfficialSource:
                 continue
             routed += 1
             try:
-                result = adapter_type(self.client).discover(plan, spec)
+                result = adapter_type(self.client, route_catalog=self.route_catalog).discover(plan, spec)
             except Exception as exc:
                 reports.append({
                     "source": self.name,

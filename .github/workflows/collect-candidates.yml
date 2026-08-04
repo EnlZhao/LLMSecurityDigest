@@ -6,10 +6,12 @@ on:
       plan_json:
         description: Optional validated SearchPlan JSON for an Hermes follow-up collection
         required: false
+        default: ""
         type: string
       request_id:
         description: Optional correlation id for an external orchestrator
         required: false
+        default: ""
         type: string
   schedule:
     # 06:15 Asia/Shanghai. This job only collects no-key source candidates.
@@ -26,6 +28,13 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Initialize collector workspace
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/llmsd/diagnostics"
+          printf 'workflow_run_id=%s\n' "$GITHUB_RUN_ID" \
+            > "$RUNNER_TEMP/llmsd/diagnostics/run.txt"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -39,31 +48,83 @@ jobs:
           python -m pip install playwright
           python -m playwright install --with-deps chromium
 
-      - name: Write requested plan or baseline plan
+      - name: Write and validate requested plan or baseline plan
+        id: prepare_plan
         env:
           PLAN_JSON: ${{ inputs.plan_json }}
+          REQUEST_ID: ${{ inputs.request_id }}
+          PLAN_PATH: ${{ runner.temp }}/llmsd/search-plan.json
+          DIAGNOSTICS_PATH: ${{ runner.temp }}/llmsd/diagnostics/run.txt
         run: |
-          mkdir -p "$RUNNER_TEMP/llmsd"
-          if [ -n "$PLAN_JSON" ]; then
-            python - <<'PY'
-            import json
-            import os
-            from pathlib import Path
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+          from pathlib import Path
 
-            value = os.environ["PLAN_JSON"]
-            if len(value.encode("utf-8")) > 32 * 1024:
-                raise SystemExit("plan_json exceeds 32 KiB")
-            plan = json.loads(value)
-            if not isinstance(plan, dict):
-                raise SystemExit("plan_json must be a JSON object")
-            Path(os.environ["RUNNER_TEMP"], "llmsd", "search-plan.json").write_text(
-                json.dumps(plan, ensure_ascii=False), encoding="utf-8"
-            )
-            PY
-          else
-            python scripts/llm_security/run_daily.py init-plan \
-              --out "$RUNNER_TEMP/llmsd/search-plan.json"
-          fi
+          from llm_security_digest.papers.models import SearchPlan
+
+          MAX_PLAN_BYTES = 32 * 1024
+          MAX_REQUEST_ID_BYTES = 256
+          plan_path = Path(os.environ["PLAN_PATH"])
+          diagnostics_path = Path(os.environ["DIAGNOSTICS_PATH"])
+
+          def mark(status: str) -> None:
+              with diagnostics_path.open("a", encoding="utf-8") as handle:
+                  handle.write(f"{status}\n")
+
+          def reject() -> None:
+              mark("plan_status=rejected")
+              raise SystemExit("plan preparation failed")
+
+          try:
+              request_id = os.environ.get("REQUEST_ID", "")
+              if len(request_id.encode("utf-8")) > MAX_REQUEST_ID_BYTES or any(
+                  ord(char) < 0x20 or ord(char) == 0x7F for char in request_id
+              ):
+                  reject()
+
+              raw = os.environ.get("PLAN_JSON", "")
+              if raw:
+                  if len(raw.encode("utf-8")) > MAX_PLAN_BYTES:
+                      reject()
+                  try:
+                      plan = json.loads(raw)
+                  except (json.JSONDecodeError, UnicodeError):
+                      reject()
+                  if not isinstance(plan, dict):
+                      reject()
+                  plan_path.write_text(
+                      json.dumps(plan, ensure_ascii=False, separators=(",", ":")) + "\n",
+                      encoding="utf-8",
+                  )
+              else:
+                  subprocess.run(
+                      [
+                          sys.executable,
+                          "scripts/llm_security/run_daily.py",
+                          "init-plan",
+                          "--out",
+                          str(plan_path),
+                      ],
+                      check=True,
+                      stdout=subprocess.DEVNULL,
+                      stderr=subprocess.DEVNULL,
+                  )
+
+              # The collector repeats this check before reading the plan;
+              # validating here fails an unsafe dispatch before collection.
+              SearchPlan.load(plan_path)
+          except SystemExit:
+              raise
+          except Exception:
+              reject()
+
+          mark("plan_status=valid")
+          mark(f"request_id_present={bool(request_id)}")
+          PY
 
       - name: Collect formal venue, OpenReview, and arXiv candidates
         id: collect
@@ -80,10 +141,61 @@ jobs:
           # those bytes before any candidate can later be materialized.
           LLMSD_HEADLESS_FALLBACK: "1"
         run: |
+          set -uo pipefail
+          set +e
           python scripts/llm_security/run_daily.py collect \
             --plan "$RUNNER_TEMP/llmsd/search-plan.json" \
             --out "$RUNNER_TEMP/llmsd/candidates.json" \
             --data-dir "$RUNNER_TEMP/llmsd"
+          status=$?
+          set -e
+          printf 'collect_exit_code=%s\n' "$status" \
+            >> "$RUNNER_TEMP/llmsd/diagnostics/run.txt"
+
+          if [ -f "$RUNNER_TEMP/llmsd/candidates.json" ]; then
+            if ! CANDIDATES_PATH="$RUNNER_TEMP/llmsd/candidates.json" \
+              REPORT_PATH="$RUNNER_TEMP/llmsd/source-report.json" \
+              python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          try:
+              payload = json.loads(
+                  Path(os.environ["CANDIDATES_PATH"]).read_text(encoding="utf-8")
+              )
+              reports = payload.get("source_reports")
+              if not isinstance(reports, list):
+                  raise ValueError("source reports are unavailable")
+              Path(os.environ["REPORT_PATH"]).write_text(
+                  json.dumps({"source_reports": reports}, ensure_ascii=False, indent=2) + "\n",
+                  encoding="utf-8",
+              )
+          except Exception:
+              raise SystemExit("source report extraction failed")
+          PY
+            then
+              printf 'source_report_status=unavailable\n' \
+                >> "$RUNNER_TEMP/llmsd/diagnostics/run.txt"
+            fi
+          fi
+          exit "$status"
+
+      - name: Record collection diagnostics
+        if: always()
+        env:
+          PREPARE_OUTCOME: ${{ steps.prepare_plan.outcome }}
+          COLLECT_OUTCOME: ${{ steps.collect.outcome }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/llmsd/diagnostics"
+          {
+            printf 'prepare_plan_outcome=%s\n' "$PREPARE_OUTCOME"
+            printf 'collect_outcome=%s\n' "$COLLECT_OUTCOME"
+            if [ ! -f "$RUNNER_TEMP/llmsd/diagnostics/run.txt" ]; then
+              printf 'diagnostics_status=workspace_unavailable\n'
+            fi
+          } >> "$RUNNER_TEMP/llmsd/diagnostics/run.txt"
 
       - name: Upload candidate artifact for Hermes ranking
         if: always()
@@ -91,9 +203,42 @@ jobs:
         with:
           name: paper-candidates-${{ github.run_id }}
           path: ${{ runner.temp }}/llmsd/candidates.json
-          if-no-files-found: error
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload source report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-source-report-${{ github.run_id }}
+          path: ${{ runner.temp }}/llmsd/source-report.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload collection diagnostics artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paper-collect-diagnostics-${{ github.run_id }}
+          path: ${{ runner.temp }}/llmsd/diagnostics
+          if-no-files-found: ignore
           retention-days: 7
 
       - name: Fail after preserving collection diagnostics
-        if: steps.collect.outcome != 'success'
-        run: exit 1
+        if: always()
+        env:
+          PREPARE_OUTCOME: ${{ steps.prepare_plan.outcome }}
+          COLLECT_OUTCOME: ${{ steps.collect.outcome }}
+        run: |
+          set -euo pipefail
+          if [ "$PREPARE_OUTCOME" != "success" ] || [ "$COLLECT_OUTCOME" = "skipped" ]; then
+            exit 1
+          fi
+          status_file="$RUNNER_TEMP/llmsd/diagnostics/run.txt"
+          status="$(sed -n 's/^collect_exit_code=//p' "$status_file" | tail -n 1)"
+          case "$status" in
+            0) exit 0 ;;
+            3) exit 3 ;;
+            ''|*[!0-9]*) exit 1 ;;
+            *) exit "$status" ;;
+          esac

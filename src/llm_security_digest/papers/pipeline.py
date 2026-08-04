@@ -155,12 +155,17 @@ def _deduplicate_formal_records(records: list[PaperFacts], reports: list[dict[st
     return canonical
 
 
-def collect(plan: SearchPlan, *, client: HttpClient | None = None) -> dict[str, Any]:
+def collect(
+    plan: SearchPlan,
+    *,
+    client: HttpClient | None = None,
+    route_catalog: Any | None = None,
+) -> dict[str, Any]:
     client = client or default_client()
     discovery_plan = _discovery_plan(plan)
     adapters = {
         "arxiv": ArxivSource(client),
-        "official": OfficialSource(client),
+        "official": OfficialSource(client, route_catalog=route_catalog),
         # The official client remains primary. The broker is available only
         # for its bounded v2 challenge-recovery route.
         "openreview": OpenReviewSource(http_client=client),

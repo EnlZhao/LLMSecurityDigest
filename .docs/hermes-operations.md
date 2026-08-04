@@ -422,12 +422,13 @@ and request limits as a local run. The input cannot execute shell, add an
 unregistered host, alter fact rules, or write `facts.json`.
 
 Use a GitHub App installation token with **Actions: write** and **Contents:
-read** for this API call. Do not use an owner personal token, and do not save a
-long-lived token in `.env`, a repository secret, an artifact, or the Hermes
-working directory. Hermes should obtain a short-lived installation token from
-an external secret manager or KMS immediately before dispatch. A full takeover
-of the same server identity that can read a local secret store cannot be made
-safe by application code; external key isolation is required.
+read** for this API call. Do not use an owner personal token. The App private
+key must never be stored in the repository or `.env`; keep it in an external
+secret manager or KMS. Hermes should mint a short-lived installation token
+immediately before dispatch, hold it only in server memory for that request,
+and discard it rather than persisting it in a file, artifact, cache, or log. A
+full takeover of the same server identity that can read a local secret store
+cannot be made safe by application code; external key isolation is required.
 
 ```bash
 curl --fail-with-body -X POST \
@@ -457,7 +458,9 @@ Chromium runtime:
 python -m pip install playwright
 python -m playwright install chromium
 python scripts/llm_security/headless_discover.py \
-  --input RUN/browser-request.json --out RUN/browser-evidence.json
+  --input RUN/browser-request.json --out RUN/browser-evidence.json \
+  --venue neurips --source official --adapter neurips --route-kind index \
+  --evidence-source hermes --data-dir "$LLMSD_DATA_DIR"
 ```
 
 The request contains at most ten HTTPS URLs and every host must be in the
@@ -509,11 +512,20 @@ python scripts/llm_security/run_daily.py route-catalog list \
   --venue usenix-security --data-dir "$LLMSD_DATA_DIR"
 ```
 
+After a browser/Bing search identifies an annual proceedings or other official
+index URL and the baseline request succeeds, Hermes must persist that route
+with `--route-kind index` (or use the equivalent `--venue`, `--source`,
+`--adapter`, and `--route-kind` context on `headless_discover.py`). The next
+collection reads only `verified` index rows as hints and scopes them to the
+registered adapter and requested year. The adapter then performs a fresh
+bounded fetch and deterministic parse, so a catalog row never supplies title,
+authors, abstract, venue, DOI, BibTeX, or `facts.json`.
+
 Failed and rejected attempts remain visible for diagnosis, but only rows with
 `verification_state: "verified"` are exposed by the reusable route helper.
-Official adapters still rebuild and re-fetch paper routes during materialize;
-the catalog is an index hint, not a facts authority or a materialization
-shortcut.
+Official adapters still rebuild and re-fetch paper detail routes during
+materialize; the catalog is an index hint, not a facts authority or a
+materialization shortcut.
 
 ## Hermes reflection and evolution
 

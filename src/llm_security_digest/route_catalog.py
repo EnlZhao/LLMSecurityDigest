@@ -451,13 +451,21 @@ class RouteCatalog:
         """
         checked_at = _utc_now()
         source_text = _metadata_text(source, field="source").casefold()
-        adapter_text = _metadata_text(adapter if adapter is not None else source_text, field="adapter").casefold()
         route_kind_text = _metadata_text(route_kind, field="route_kind").casefold()
         evidence_text = _metadata_text(evidence_source, field="evidence_source")
         try:
             spec = get_registered_venue_spec(venue)
         except Exception:
             spec = None
+        default_adapter = (
+            str(spec.adapter).strip()
+            if source_text == "official" and spec is not None and spec.adapter
+            else source_text
+        )
+        adapter_text = _metadata_text(
+            adapter if adapter is not None else default_adapter,
+            field="adapter",
+        ).casefold()
         if spec is None:
             venue_key = _metadata_text(venue, field="venue").casefold()
             normalized_url = _redact_url(url)
@@ -479,6 +487,12 @@ class RouteCatalog:
             )
         venue_key = spec.key
         try:
+            if source_text == "official" and spec.adapter:
+                expected_adapter = str(spec.adapter).strip().casefold()
+                if adapter_text != expected_adapter:
+                    raise RouteCatalogError(
+                        f"official adapter does not match registered venue adapter: {expected_adapter}"
+                    )
             normalized_url = _normalize_url(url)
             allowed_hosts = _registered_hosts(spec, source_text)
             if not allowed_hosts:
@@ -626,7 +640,12 @@ class RouteCatalog:
         except RouteCatalogError:
             return None
         source_text = str(source).strip().casefold()
-        adapter_text = str(adapter if adapter is not None else source_text).strip().casefold()
+        default_adapter = (
+            str(spec.adapter).strip()
+            if source_text == "official" and spec is not None and spec.adapter
+            else source_text
+        )
+        adapter_text = str(adapter if adapter is not None else default_adapter).strip().casefold()
         route_kind_text = str(route_kind).strip().casefold()
         with self._connect() as connection:
             row = connection.execute(
