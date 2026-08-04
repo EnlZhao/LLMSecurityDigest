@@ -324,6 +324,46 @@ def test_baseline_cli_workflow_is_bounded_and_authoritative(monkeypatch, tmp_pat
     assert matches["matches"]
 
 
+def test_materialize_cli_rejects_plan_target_below_production_target(tmp_path) -> None:
+    daily = _daily_module()
+    candidates = tmp_path / "candidates.json"
+    selection = tmp_path / "selection.json"
+    candidates.write_text(json.dumps({"plan": {"target": 1}, "candidates": []}), encoding="utf-8")
+    selection.write_text(json.dumps({"selections": []}), encoding="utf-8")
+
+    args = argparse.Namespace(
+        candidates=candidates,
+        selection=selection,
+        facts=tmp_path / "facts.json",
+        manifest=tmp_path / "manifest.json",
+        data_dir=str(tmp_path / "data"),
+        target=None,
+        scholar_limit=None,
+    )
+    with pytest.raises(ValueError, match="production target must remain 10"):
+        daily.command_materialize(args)
+
+
+def test_materialize_cli_rejects_non_integer_production_target(tmp_path) -> None:
+    daily = _daily_module()
+    candidates = tmp_path / "candidates.json"
+    selection = tmp_path / "selection.json"
+    candidates.write_text(json.dumps({"plan": {"target": 10.0}, "candidates": []}), encoding="utf-8")
+    selection.write_text(json.dumps({"selections": []}), encoding="utf-8")
+
+    args = argparse.Namespace(
+        candidates=candidates,
+        selection=selection,
+        facts=tmp_path / "facts.json",
+        manifest=tmp_path / "manifest.json",
+        data_dir=str(tmp_path / "data"),
+        target=None,
+        scholar_limit=None,
+    )
+    with pytest.raises(ValueError, match="production target must remain 10"):
+        daily.command_materialize(args)
+
+
 def test_evolution_cli_errors_do_not_echo_exception_details(monkeypatch, tmp_path, capsys) -> None:
     daily = _daily_module()
     secret = "TOP_SECRET_VALUE"

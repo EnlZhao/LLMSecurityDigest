@@ -821,6 +821,46 @@ def test_crossref_missing_abstract_or_pdf_stays_incomplete(missing) -> None:
     assert missing in incomplete[0]["missing"]
 
 
+def test_crossref_unknown_publication_date_remains_unknown() -> None:
+    item = _crossref_item()
+    item.pop("published")
+
+    papers, incomplete = CrossrefSource.parse_items_with_incomplete(
+        _crossref_response(item), expected_venue="ieee-sp"
+    )
+
+    assert incomplete == []
+    assert len(papers) == 1
+    assert papers[0].published_at is None
+
+
+def test_crossref_discovery_clips_api_over_return_to_venue_budget() -> None:
+    first = _crossref_item()
+    second = _crossref_item()
+    second["DOI"] = "10.1109/SP.2026.7654321"
+    second["title"] = ["Crossref second title"]
+    response = HttpResponse(
+        url="https://api.crossref.org/works",
+        final_url="https://api.crossref.org/works",
+        status=200,
+        headers={},
+        body=json.dumps({"message": {"items": [first, second]}}).encode(),
+    )
+
+    result = CrossrefSource(_ResponseClient(response)).discover_result(SearchPlan(
+        queries=["security"],
+        sources=["crossref"],
+        crossref_venues=["ieee-sp"],
+        max_results_per_query=1,
+        max_results_per_venue=1,
+    ))
+
+    assert len(result.papers) == 1
+    assert result.reports[0]["records_valid"] == 1
+    assert result.reports[0]["records_filtered"] == 1
+    assert result.reports[0]["truncated"] is True
+
+
 @pytest.mark.parametrize("missing", ["abstract", "pdf_url"])
 def test_ieee_missing_abstract_or_pdf_stays_incomplete(missing) -> None:
     article = _ieee_article()
@@ -904,6 +944,38 @@ def test_ieee_discovery_pages_requests_above_api_record_cap() -> None:
     assert [int(parse_qs(urlparse(url).query)["start_record"][0]) for url in client.calls] == [1, 101]
     assert result.reports[0]["records_scanned"] == 110
     assert result.reports[0]["records_valid"] == 110
+
+
+def test_ieee_discovery_clips_api_over_return_to_venue_budget() -> None:
+    first = _ieee_article()
+    second = _ieee_article()
+    second.update({
+        "doi": "10.1109/SP.2026.7654321",
+        "title": "IEEE second title",
+        "article_number": "7654321",
+        "html_url": "https://ieeexplore.ieee.org/document/7654321",
+        "pdf_url": "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=7654321",
+    })
+    response = HttpResponse(
+        url="https://ieeexploreapi.ieee.org/api/v1/search/articles",
+        final_url="https://ieeexploreapi.ieee.org/api/v1/search/articles",
+        status=200,
+        headers={},
+        body=json.dumps({"articles": [first, second]}).encode(),
+    )
+
+    result = IeeeXploreSource(_ResponseClient(response), api_key="test-key").discover_result(SearchPlan(
+        queries=["security"],
+        sources=["ieee_xplore"],
+        venue_groups=["ieee-sp"],
+        max_results_per_query=1,
+        max_results_per_venue=1,
+    ))
+
+    assert len(result.papers) == 1
+    assert result.reports[0]["records_valid"] == 1
+    assert result.reports[0]["records_filtered"] == 1
+    assert result.reports[0]["truncated"] is True
 
 
 def test_missing_bibtex_is_rejected_before_materialization(monkeypatch, tmp_path) -> None:

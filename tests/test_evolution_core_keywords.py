@@ -44,6 +44,11 @@ def test_apply_overlay_ignores_legacy_source_override() -> None:
     assert updated.sources == plan.sources
 
 
+def test_target_cannot_be_changed_by_evolution_overlay() -> None:
+    with pytest.raises(EvolutionValidationError, match="search_plan overlay fields are not allowed"):
+        validate_overlay({"overlay": {"search_plan": {"target": 1}}})
+
+
 def test_legacy_source_overlay_requires_explicit_read_compatibility() -> None:
     candidate = {"overlay": {"search_plan": {"sources": ["arxiv"]}}}
 

@@ -1,6 +1,6 @@
 # Paper Daily
 
-每天在 headless 服务器上收集最多 10 篇 LLM Security 论文，并生成静态站。数量不足时宁缺毋滥：只有元数据、权威 BibTeX 和下载正文均通过脚本校验的论文才能发布。
+每天在 headless 服务器上以 10 篇为目标收集 LLM Security 论文（5 篇主方向、5 篇大方向）并生成静态站。数量不足时宁缺毋滥：只有元数据、权威 BibTeX 和下载正文均通过脚本校验的论文才能发布。
 
 ## 事实边界
 
@@ -35,6 +35,11 @@ arXiv 补位 -> LLM 仅按 `paper_id` 排序 -> 脚本下载并校验 BibTeX/正
 不作为 title、authors、abstract、venue 或 BibTeX 的权威来源；每篇论文都会
 生成 Scholar 搜索链接，即使没有配置 SerpAPI。无 key 源失败时，source report
 会保留请求阶段和错误，不以兜底数据掩盖失败。
+
+arXiv 与正式记录的 reconciliation 只有两种方式：规范化 DOI 完全相同；或在
+无 DOI 时标题完全相同、第一作者相同且作者集合 Jaccard 相似度至少为 `0.8`。
+匹配后正式记录保留 canonical 身份，arXiv ID 只作为 alternate identifier；
+`journal_ref` 和 comments 只能进入待验证证据，不能单独升级发表状态。
 
 可选环境变量：
 
@@ -80,8 +85,9 @@ materialize 才下载 PDF、验证身份并冻结事实。ACM CCS/TOPS 走 Cross
 
 Hermes 的 `selection.json` 每项必须包含非事实字段
 `paper_id`、`score`、`category`、`reason` 和 `track`；
-`track` 只能是 `core` 或 `broad`。每天每轨最多发布 5 篇，目标最多
-10 篇。`search-plan.json` 的 `core_keywords` 定义主方向；标为 `core`
+`track` 只能是 `core` 或 `broad`。生产目标固定为 10 篇，每轨最多发布
+5 篇；验证失败时允许短缺但不能由 Hermes 降低目标或用未验证记录凑数。
+`search-plan.json` 的 `core_keywords` 定义主方向；标为 `core`
 的候选必须由脚本在标题或权威摘要中命中其中至少一个关键词。验证失败、
 关键词不匹配或配额超出时保留可见拒绝记录，允许少于 10 篇，不自动凑数。
 
@@ -99,6 +105,21 @@ python scripts/llm_security/render_and_push.py \
   --facts RUN/facts.json --manifest RUN/manifest.json \
   --analysis RUN/analysis.json --date YYYY-MM-DD --build-site
 ```
+
+Hermes 先用 `outline` 获取章节，再用 `read-section` 和 `find` 分段读取已验证正文；脚本将单节限制为 6,000 字符、`find` 最多 3 个匹配、每个匹配最多 300 字符上下文，查询最多 500 字符。分段阅读结果只能进入 `analysis.json`，不得回写 `facts.json` 的事实字段。
+
+路线目录只保存已验证的路由元数据，不保存论文事实、PDF 或 `facts.json`。候选 URL 通过基线 HTTP（或已启用的受限 headless fallback）后才可登记：
+
+```bash
+python scripts/llm_security/run_daily.py route-catalog verify \
+  --venue VENUE --url https://REGISTERED-HOST/INDEX \
+  --source official --route-kind index --evidence-source hermes \
+  --data-dir "$LLMSD_DATA_DIR"
+python scripts/llm_security/run_daily.py route-catalog list \
+  --venue VENUE --verified-only --data-dir "$LLMSD_DATA_DIR"
+```
+
+只有 `verification_state: "verified"` 的 index 路由可作为提示；官方 adapter 仍会重新抓取并解析，目录记录不是事实权威。失败或未注册的尝试会保留供诊断，但不会被复用。
 
 ### Hermes evolution
 
@@ -166,6 +187,11 @@ never a fact authority for title, authors, abstract, venue, URLs, or BibTeX.
   persisted as metadata-only routes in `LLMSD_DATA_DIR/route_catalog.sqlite3`.
   Failed or unregistered attempts remain visible, while only verified routes
   are reusable; the catalog never writes paper facts, PDFs, or `facts.json`.
+- The production CLI and Actions workflow now keep the ten-paper target
+  immutable; evolution overlays may tune discovery strategy but cannot lower
+  the target. Crossref and IEEE responses are locally clipped to their venue
+  budgets, and incomplete Crossref dates remain explicitly unknown instead of
+  discarding otherwise authoritative records.
 - NDSS records whose official detail page omits a DOI/BibTeX export now use a
   Crossref DOI only after an exact title, first-author, author-set, container,
   and proceedings-type match; BibTeX still comes from DOI content negotiation.

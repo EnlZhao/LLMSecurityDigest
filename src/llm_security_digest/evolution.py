@@ -83,7 +83,7 @@ ALLOWED_OVERLAY_ROOTS = frozenset({
 ALLOWED_SEARCH_PLAN_KEYS = frozenset({
     "queries_add", "filter_keywords_add", "core_keywords_add", "venue_groups_add",
     "openreview_venues", "crossref_venues", "max_results_per_query",
-    "max_results_per_venue", "scholar_enrich_limit", "target", "date_from", "date_to",
+    "max_results_per_venue", "scholar_enrich_limit", "date_from", "date_to",
 })
 ALLOWED_PROMPT_KEYS = frozenset({"fragments_add", "instructions_add", "sections_add"})
 ALLOWED_READING_KEYS = frozenset({"fragments_add", "section_ids_add", "queries_add", "max_chars", "max_sections"})
@@ -519,7 +519,7 @@ def _validate_overlay_shape(overlay: dict[str, Any]) -> None:
                     _validate_iso_date(value[key], f"search_plan.{key}")
             if "date_from" in value and "date_to" in value and value["date_from"] > value["date_to"]:
                 raise EvolutionValidationError("search_plan.date_from must not be later than date_to")
-            for key in ("max_results_per_query", "max_results_per_venue", "scholar_enrich_limit", "target"):
+            for key in ("max_results_per_query", "max_results_per_venue", "scholar_enrich_limit"):
                 if key in value and (not isinstance(value[key], int) or isinstance(value[key], bool)):
                     raise EvolutionValidationError(f"search_plan.{key} must be an integer")
         elif root == "prompt":
@@ -855,7 +855,7 @@ def apply_overlay(plan: SearchPlan | dict[str, Any], overlay: dict[str, Any] | N
             raw[target] = existing
     for key in (
         "openreview_venues", "crossref_venues", "date_from", "date_to",
-        "max_results_per_query", "max_results_per_venue", "scholar_enrich_limit", "target",
+        "max_results_per_query", "max_results_per_venue", "scholar_enrich_limit",
     ):
         if key in search:
             raw[key] = copy.deepcopy(search[key])

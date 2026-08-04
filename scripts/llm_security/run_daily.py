@@ -14,7 +14,7 @@ if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
 from llm_security_digest.papers.env import load_dotenv
-from llm_security_digest.papers.models import DEFAULT_OPENREVIEW_VENUES, SearchPlan, SelectionEntry
+from llm_security_digest.papers.models import DAILY_TARGET, DEFAULT_OPENREVIEW_VENUES, SearchPlan, SelectionEntry
 from llm_security_digest.papers.pipeline import collect, default_client, materialize, write_json
 from llm_security_digest.papers.openreview_client import openreview_failure_stage, openreview_error_message
 from llm_security_digest.papers.sources import OpenReviewSource
@@ -104,6 +104,8 @@ def command_collect(args: argparse.Namespace) -> int:
     evolution_health = evolution_store.health_check()
     active = evolution_store.load_active()
     plan = apply_overlay(plan, active.get("overlay", {}))
+    if plan.target != DAILY_TARGET:
+        raise ValueError(f"production target must remain {DAILY_TARGET}")
     # Collection may consult only previously verified route metadata.  The
     # adapters still fetch and parse every selected hint through HttpClient.
     payload = collect(plan, route_catalog=RouteCatalog(_data_dir(args.data_dir)))
@@ -126,7 +128,10 @@ def command_materialize(args: argparse.Namespace) -> int:
     plan = payload.get("plan") if isinstance(payload.get("plan"), dict) else {}
     # Keep candidate-provided budgets typed.  Coercing a malformed string
     # here would bypass the materializer's bounded integer contract.
-    target = args.target if args.target is not None else plan.get("target", 10)
+    requested_target = args.target if args.target is not None else plan.get("target", DAILY_TARGET)
+    if type(requested_target) is not int or requested_target != DAILY_TARGET:
+        raise ValueError(f"production target must remain {DAILY_TARGET}")
+    target = DAILY_TARGET
     scholar_limit = args.scholar_limit if args.scholar_limit is not None else plan.get("scholar_enrich_limit", 30)
     facts, manifest = materialize(
         candidates_payload=payload,

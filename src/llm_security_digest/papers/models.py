@@ -25,6 +25,11 @@ FACT_FIELDS = {
     "bibtex",
 }
 
+# Production runs aim for ten verified papers: five core-track and five
+# broad-track records. Low-level pipeline tests may use a smaller target
+# directly; production entry points enforce this constant.
+DAILY_TARGET = 10
+
 
 def facts_sha256(facts: dict[str, Any]) -> str:
     """Return the stable SHA-256 identity of a complete facts payload.
@@ -443,9 +448,9 @@ class SearchPlan:
     sources: list[str] = field(default_factory=lambda: ["official", "openreview", "crossref", "arxiv"])
     openreview_venues: list[str] = field(default_factory=lambda: list(DEFAULT_OPENREVIEW_VENUES))
     crossref_venues: list[str] = field(default_factory=list)
-    # Collection is intentionally bounded for the headless daily job.  A
-    # Hermes overlay may tune these values, but SearchPlan validation keeps
-    # every source within the same hard upper limits.
+    # Collection is intentionally bounded for the headless daily job. A
+    # Hermes overlay may tune discovery limits, but the production entry
+    # points keep the ten-paper materialization target immutable.
     max_results_per_query: int = 50
     max_results_per_venue: int = 50
     scholar_enrich_limit: int = 30
@@ -464,6 +469,8 @@ class SearchPlan:
             raise ValueError(f"unknown search-plan fields: {', '.join(unknown)}")
         plan = cls(**raw)
         plan.validate()
+        if plan.target != DAILY_TARGET:
+            raise ValueError(f"production target must remain {DAILY_TARGET}")
         return plan
 
     def validate(self) -> None:
@@ -504,8 +511,9 @@ class SearchPlan:
             ("max_results_per_query", self.max_results_per_query, 1, 1000),
             ("max_results_per_venue", self.max_results_per_venue, 1, 5000),
             # The daily workflow is deliberately bounded to ten published
-            # papers: five core and five broad. Evolution may tune discovery,
-            # but it cannot enlarge this materialization budget.
+            # papers: five core and five broad. Production entry points
+            # enforce DAILY_TARGET; low-level callers retain a small test
+            # target for isolated verification.
             ("target", self.target, 1, 10),
             ("scholar_enrich_limit", self.scholar_enrich_limit, 0, 100),
         )

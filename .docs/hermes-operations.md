@@ -23,16 +23,17 @@ The daily job always follows this order:
 7. Render offline from the frozen facts, then write the daily reflection and
    propose an evolution candidate for a later run.
 
-The target is a maximum, not a quota. Selection entries must include the
-non-fact `track` value `core` or `broad`. Materialization publishes at
-most five verified records per track (five core plus five broad); a sixth
+The production target is fixed at ten papers: five `core` and five `broad`.
+Selection entries must include the non-fact `track` value `core` or `broad`.
+Materialization publishes at most five verified records per track; a sixth
 verified record on a full track is rejected with a visible
-`track_quota_exceeded` reason. A source failure, quota rejection, or
-core candidate that does not match at least one plan-owned `core_keywords`
-term in its script-owned title or authoritative abstract is rejected visibly;
-Hermes cannot use a `core` label to override this boundary. An
-unverified paper must remain visible, and no shortfall is filled by an LLM
-guess or an automatic substitute.
+`track_quota_exceeded` reason. A source failure, quota rejection, or core
+candidate that does not match at least one plan-owned `core_keywords` term in
+its script-owned title or authoritative abstract is rejected visibly. Hermes
+cannot lower the target in a plan or CLI argument, or use a `core` label to
+override this boundary. The result may be short only when authoritative
+verification rejects candidates; no shortfall is filled by an LLM guess or an
+automatic substitute.
 
 ## Frozen snapshot boundary
 

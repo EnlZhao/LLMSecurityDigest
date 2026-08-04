@@ -1564,12 +1564,16 @@ class CrossrefSource:
                     )
                     requests_succeeded += 1
                     parsed, parsed_incomplete, stats = self._parse_items_with_stats(response, expected_venue=spec)
-                    papers.extend(parsed)
+                    remaining = plan.max_results_per_venue - venue_papers
+                    accepted = parsed[:remaining]
+                    papers.extend(accepted)
                     incomplete.extend(parsed_incomplete)
-                    venue_papers += len(parsed)
+                    venue_papers += len(accepted)
                     venue_incomplete.extend(parsed_incomplete)
                     venue_scanned += stats["scanned"]
-                    venue_filtered += stats["filtered"]
+                    # The API may ignore `rows`; locally clip accepted
+                    # records so a source cannot exceed its venue budget.
+                    venue_filtered += stats["filtered"] + len(parsed) - len(accepted)
                 except Exception as exc:
                     venue_errors.append({
                         "query": query,
@@ -1721,7 +1725,6 @@ class CrossrefSource:
                     ("title", title),
                     ("authors", authors),
                     ("abstract", abstract),
-                    ("published_at", published_at),
                     ("pdf_url", pdf_url),
                 ) if not value
             ]
@@ -2089,12 +2092,16 @@ class IeeeXploreSource:
                         )
                         requests_succeeded += 1
                         parsed, parsed_incomplete, stats = self.parse_articles(response, spec=spec)
-                        venue_papers.extend(parsed)
+                        remaining = plan.max_results_per_venue - len(venue_papers)
+                        accepted = parsed[:remaining]
+                        venue_papers.extend(accepted)
                         venue_incomplete.extend(parsed_incomplete)
                         page_scanned = stats["scanned"]
                         query_scanned += page_scanned
                         scanned += page_scanned
-                        filtered += stats["filtered"]
+                        # The API may return more articles than requested;
+                        # enforce the venue budget on accepted records locally.
+                        filtered += stats["filtered"] + len(parsed) - len(accepted)
                         if page_scanned < limit:
                             break
                         start_record += page_scanned

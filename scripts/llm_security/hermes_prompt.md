@@ -13,8 +13,10 @@ You orchestrate the daily run, but scripts own every paper fact.
 - Define the main direction with `core_keywords` in `search-plan.json` before
   ranking. A `core` selection must match one of those terms in its script-owned
   title or authoritative abstract; a label cannot override that check.
-- The target is 10 papers, but publishing fewer verified papers is correct; never
-  fill a track or total shortfall with an unverified paper.
+- The production target is fixed at 10 papers (5 `core` and 5 `broad`). The
+  baseline may publish fewer only when authoritative refresh, BibTeX, full-text,
+  or track validation rejects candidates; never lower the target in a plan or
+  CLI argument, and never fill a shortfall with an unverified paper.
 
 ## Ranking and interpretation quality
 

@@ -125,7 +125,9 @@ jobs:
 
               # The collector repeats this check before reading the plan;
               # validating here fails an unsafe dispatch before collection.
-              SearchPlan.load(plan_path)
+              validated_plan = SearchPlan.load(plan_path)
+              if validated_plan.target != 10:
+                  reject()
           except SystemExit:
               raise
           except Exception:
