@@ -6,18 +6,23 @@
   <string>com.llm-security-digest.daily</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/ez/llm-security-digest/.venv/bin/python</string>
+    <string>/Users/hengzhao/LLMSecurityDigest/.venv/bin/python</string>
     <string>-m</string>
     <string>llm_security_digest.runner</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/ez/llm-security-digest</string>
+  <string>/Users/hengzhao/LLMSecurityDigest</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>TZ</key>
     <string>Asia/Shanghai</string>
     <key>PATH</key>
-    <string>/Users/ez/llm-security-digest/.venv/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <string>/Users/hengzhao/LLMSecurityDigest/.venv/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <!--
+      SERPAPI_API_KEY and LLMSD_CONTACT_EMAIL must be set in the user's shell
+      environment via ~/.hermes/.env or launchd's EnvironmentVariables below.
+      They MUST NOT be hard-coded here because this file is tracked in git.
+    -->
   </dict>
   <key>StartCalendarInterval</key>
   <dict>
@@ -29,9 +34,9 @@
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/Users/ez/llm-security-digest/logs/launchd.out.log</string>
+  <string>/Users/hengzhao/LLMSecurityDigest/logs/launchd.out.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/ez/llm-security-digest/logs/launchd.err.log</string>
+  <string>/Users/hengzhao/LLMSecurityDigest/logs/launchd.err.log</string>
   <key>ProcessType</key>
   <string>Background</string>
 </dict>
