@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 from llm_security_digest.papers.http import HttpResponse
@@ -26,6 +27,15 @@ class FakeClient:
 def _daily_module():
     path = Path(__file__).resolve().parents[1] / "scripts" / "llm_security" / "run_daily.py"
     spec = importlib.util.spec_from_file_location("test_route_catalog_daily", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _headless_module():
+    path = Path(__file__).resolve().parents[1] / "scripts" / "llm_security" / "headless_discover.py"
+    spec = importlib.util.spec_from_file_location("test_headless_discover_cli", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -159,6 +169,64 @@ def test_route_catalog_cli_verify_and_list(monkeypatch, tmp_path, capsys) -> Non
     assert daily.main() == 0
     listed = json.loads(capsys.readouterr().out)
     assert len(listed["routes"]) == 1
+
+
+def test_headless_cli_raw_uses_requested_data_dir_and_reports_responses(monkeypatch, tmp_path, capsys) -> None:
+    headless = _headless_module()
+    request_path = tmp_path / "browser-request.json"
+    output_path = tmp_path / "browser-raw.json"
+    request_path.write_text(
+        json.dumps({
+            "urls": ["https://proceedings.neurips.cc/paper_files/paper/2025"],
+            "route_context": {"venue": "neurips"},
+        }),
+        encoding="utf-8",
+    )
+    seen: dict[str, object] = {}
+
+    class Catalog:
+        def __init__(self, data_dir):
+            seen["data_dir"] = Path(data_dir)
+
+    class Discovery:
+        def collect_raw(self, request, *, route_catalog, route_context):
+            seen["request"] = request
+            seen["catalog"] = route_catalog
+            seen["context"] = route_context
+            return {
+                "status": "ok",
+                "responses": [{"url": request["urls"][0]}],
+                "errors": [],
+                "facts_written": False,
+                "materializer": "baseline_only",
+            }
+
+    monkeypatch.setattr(headless, "RouteCatalog", Catalog)
+    monkeypatch.setattr(headless, "HeadlessDiscovery", Discovery)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "headless_discover.py",
+            "--raw",
+            "--input",
+            str(request_path),
+            "--out",
+            str(output_path),
+            "--data-dir",
+            str(tmp_path / "runtime"),
+        ],
+    )
+
+    assert headless.main() == 0
+    assert seen["data_dir"] == (tmp_path / "runtime")
+    assert seen["catalog"] is not None
+    assert seen["context"] is None
+    assert json.loads(capsys.readouterr().out) == {
+        "status": "ok",
+        "evidence": 1,
+        "facts_written": False,
+    }
 
 
 def test_official_adapter_uses_only_matching_verified_index_hint() -> None:
