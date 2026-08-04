@@ -146,7 +146,49 @@ runtime data directory contains `evolution/candidates`, `shadow`, `active`,
 `rejected`, and `history`; it must never contain secrets or private paper text.
 
 GitHub Actions may produce a candidate artifact from the registered formal
-venues, arXiv, and OpenReview. Treat that artifact exactly like local
+venues, arXiv, OpenReview. Treat that artifact exactly like local
 `candidates.json`: facts still come from the collector, and `materialize` must
 verify BibTeX and full text before publishing. The optional Scholar probe is
 diagnostic only.
+
+## Interpretive discipline (analysis.json and notes/)
+
+The interpretive layer — `analysis.json` and the optional Markdown note in
+`notes/` — is the only place Hermes writes paper content. Five rules apply,
+inherited from the upstream `917Dhj/DeepPaperNote` evidence-first policy
+and adapted to the LLMSecurityDigest pipeline.
+
+1. **Do not write the finished analysis from the abstract alone.** Every
+   `summary_zh`, the five dimensions, and every claim in the note must be
+   grounded in at least one `outline` section, `read-section` chunk, or
+   `find` query hit. An interpretation built only from `summary_en` is
+   rejected by the grounding lint.
+2. **Five dimensions, in this order**: `background_zh`,
+   `limitation_zh`, `motivation_zh`, `contribution_zh`,
+   `tech_innovation_zh`. Each ≤ 200 Chinese characters, each followed by a
+   citation of the form `(sec:<id>, p.<n>)` or `(sec:<id>)`. The bucket
+   (`main_track` or `others`) follows the current main track statement in
+   `DAILY.md` §1.1; only the user changes that statement. The only tag
+   recorded on a paper is the venue axis (`venue:<short>`); the LLM does
+   not invent venue tags.
+3. **Bidirectional claim labels.** Each central claim in the Markdown note
+   is written as `{what it actually proves, what it does not prove}`. The
+   "does not prove" half is not optional. Overclaiming is a lint failure.
+4. **Three failure modes are explicit in the output.** When a metadata
+   field cannot be resolved, the note shows exactly one of `not_found`,
+   `not_provided`, or `ambiguous`. Never a paraphrase, never a guess.
+5. **The PDF is never loaded into a single model request.** `outline`
+   first, then bounded `read-section`, then `find` (≤ 3 calls per paper).
+   Total section reads per paper ≤ 200 KB. The bounding numbers live in
+   `~/.hermes/skills/deeppapernote/SKILL.md` and must match across the
+   prompt and the skill.
+
+## Notes output
+
+When the user requests a deep-read for a `paper_id`, the LLM loads the
+`deeppapernote` skill and writes `notes/<date>-<paper_id>.md`. The
+note's YAML frontmatter carries only fact fields copied verbatim from
+`facts.json`. The body has the five dimensions as sections plus a
+`## 我的批注` block. The note passes the grounding lint before it is
+declared successful; a failing lint returns the paper to the user with
+an explicit error rather than relaxing the rule.
