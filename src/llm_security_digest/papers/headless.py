@@ -74,6 +74,9 @@ def _registered_hosts() -> frozenset[str]:
         "api.crossref.org", "doi.org", "ieeexploreapi.ieee.org",
         "www.ieee-security.org", "raw.githubusercontent.com",
         "www.computer.org", "csdl-downloads.ieeecomputer.org",
+        # Bing is discovery-only. Its snippets and links are evidence for
+        # Hermes; no deterministic adapter treats Bing as a fact authority.
+        "www.bing.com", "bing.com",
     })
     return frozenset(values)
 

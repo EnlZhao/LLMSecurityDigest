@@ -228,15 +228,36 @@ _OPENREVIEW_VENUES: dict[str, VenueSpec] = {
 }
 
 
-def get_registered_openreview_spec(value: str | None) -> VenueSpec | None:
-    """Return a spec only when ``value`` is an exact registered OpenReview id.
+def _openreview_year_is_allowed(value: str) -> bool:
+    """Bound family-derived venue ids without hard-coding one cycle."""
+    parts = _normalize_openreview_id(value).split("/")
+    if len(parts) != 3 or not re.fullmatch(r"(?:19|20)\d{2}", parts[1]):
+        return False
+    year = int(parts[1])
+    # Historical proceedings remain queryable; a future cycle is limited to
+    # the next calendar year so a typo cannot turn into an unbounded request.
+    return 2000 <= year <= datetime.now(timezone.utc).year + 1
 
-    This intentionally differs from :func:`get_venue_spec`, whose family
-    matching is retained for recognizing source records from newer cycles.
+
+def get_registered_openreview_spec(value: str | None) -> VenueSpec | None:
+    """Return a registered family spec for an allowed OpenReview cycle.
+
+    OpenReview changes the year segment on every conference cycle. The
+    family, path suffix, and bounded year grammar are baseline-owned; an
+    arbitrary ``*.cc`` family is still rejected.
     """
     if not isinstance(value, str) or not value.strip():
         return None
-    return _OPENREVIEW_VENUES.get(_normalize_openreview_id(value))
+    normalized = _normalize_openreview_id(value)
+    exact = _OPENREVIEW_VENUES.get(normalized)
+    if exact is not None:
+        return exact
+    if not _openreview_year_is_allowed(normalized):
+        return None
+    for spec in VENUE_SPECS:
+        if spec.matches_openreview(normalized):
+            return spec
+    return None
 
 
 def get_registered_venue_spec(value: str | VenueSpec | None) -> VenueSpec | None:
@@ -469,6 +490,8 @@ class SearchPlan:
                 raise ValueError(f"unknown OpenReview venue: {venue}")
             if "openreview" not in spec.source_kinds:
                 raise ValueError(f"OpenReview source is not registered for venue: {venue}")
+        if len(self.openreview_venues) > 30:
+            raise ValueError("openreview_venues exceeds safety limits")
         for venue in self.crossref_venues:
             spec = get_registered_venue_spec(venue)
             if spec is None or "crossref" not in spec.source_kinds:

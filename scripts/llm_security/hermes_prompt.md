@@ -52,9 +52,11 @@ You orchestrate the daily run, but scripts own every paper fact.
 Google Scholar is queried through SerpAPI only after a paper reaches the ranked shortlist. Scholar metadata is enrichment, not authority.
 
 The optional headless browser helper may collect only allowlisted candidate URL
-evidence. Its output is not a facts file and cannot be used to fill title,
-authors, abstract, venue, status, DOI, URL, or BibTeX. Always send any browser
-candidate back through the deterministic source adapter and materializer.
+evidence, including a bounded Bing search page. Its output is not a facts file
+and cannot be used to fill title, authors, abstract, venue, status, DOI, URL,
+or BibTeX. Always send any browser or Bing candidate back through the
+deterministic source adapter and materializer. Bing is a discovery index, never
+a paper authority.
 When a registered public source blocks direct HTTP, the operator may set
 `LLMSD_HEADLESS_FALLBACK=1`; this keeps direct HTTP primary and still routes raw
 HTML/JSON/PDF response bytes through the baseline adapter. OpenReview remains on

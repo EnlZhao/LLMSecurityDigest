@@ -162,6 +162,10 @@ never a fact authority for title, authors, abstract, venue, URLs, or BibTeX.
 
 ### 2026-08-04
 
+- Hermes-discovered annual venue URLs can now be deterministically verified and
+  persisted as metadata-only routes in `LLMSD_DATA_DIR/route_catalog.sqlite3`.
+  Failed or unregistered attempts remain visible, while only verified routes
+  are reusable; the catalog never writes paper facts, PDFs, or `facts.json`.
 - NDSS records whose official detail page omits a DOI/BibTeX export now use a
   Crossref DOI only after an exact title, first-author, author-set, container,
   and proceedings-type match; BibTeX still comes from DOI content negotiation.

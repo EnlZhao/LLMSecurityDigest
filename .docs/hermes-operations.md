@@ -461,11 +461,13 @@ python scripts/llm_security/headless_discover.py \
 ```
 
 The request contains at most ten HTTPS URLs and every host must be in the
-registered official-source allowlist. Output is bounded page evidence (title,
-links, and a short text excerpt) with `facts_written: false`; credentials,
+registered source/search allowlist. `https://www.bing.com/search?q=...` may be
+used only to discover likely official URLs. Output is bounded page evidence
+(title, links, and a short text excerpt) with `facts_written: false`; credentials,
 arbitrary browser code, `PaperFacts`, and `facts.json` are inaccessible to the
-browser layer. Treat the evidence only as a candidate URL hint and route the
-paper through the normal deterministic adapter and materializer.
+browser layer. Treat Bing snippets, ranking, and URLs only as candidate
+evidence; route every result through the normal deterministic adapter and
+materializer before facts are accepted.
 
 When direct HTTP is blocked by a registered source, the collector can opt in to
 the raw-response transport with `LLMSD_HEADLESS_FALLBACK=1`. Direct HTTP remains
@@ -484,6 +486,34 @@ python scripts/llm_security/headless_discover.py --raw \
 
 Secret-like query parameters are rejected rather than passed to the browser.
 Direct and fallback failures remain visible in the source report.
+
+### Persistent route catalog
+
+Hermes, browser, and Bing results are candidate hints only. A candidate URL
+must pass the baseline HTTP client (or its bounded registered-host headless
+fallback) before it can enter the runtime SQLite catalog at
+`LLMSD_DATA_DIR/route_catalog.sqlite3`. Credentials, HTTP URLs, private or
+unregistered hosts, secret-like query parameters, and off-allowlist redirects
+are rejected. The catalog stores route metadata and verification diagnostics,
+never `PaperFacts`, paper content, or `facts.json`.
+
+Verify and inspect routes with:
+
+```bash
+python scripts/llm_security/run_daily.py route-catalog verify \
+  --venue usenix-security \
+  --url https://www.usenix.org/conference/usenixsecurity26/presentation/example \
+  --source official --route-kind landing --evidence-source hermes \
+  --data-dir "$LLMSD_DATA_DIR"
+python scripts/llm_security/run_daily.py route-catalog list \
+  --venue usenix-security --data-dir "$LLMSD_DATA_DIR"
+```
+
+Failed and rejected attempts remain visible for diagnosis, but only rows with
+`verification_state: "verified"` are exposed by the reusable route helper.
+Official adapters still rebuild and re-fetch paper routes during materialize;
+the catalog is an index hint, not a facts authority or a materialization
+shortcut.
 
 ## Hermes reflection and evolution
 

@@ -19,6 +19,7 @@ from llm_security_digest.papers.pipeline import collect, default_client, materia
 from llm_security_digest.papers.openreview_client import openreview_failure_stage, openreview_error_message
 from llm_security_digest.papers.sources import OpenReviewSource
 from llm_security_digest.evolution import EvolutionStore, EvolutionValidationError, apply_overlay, validate_evolution
+from llm_security_digest.route_catalog import RouteCatalog
 
 
 DEFAULT_PLAN = {
@@ -429,6 +430,37 @@ def command_doctor(args: argparse.Namespace) -> int:
     return 0 if all(check["status"] in {"ok", "configured", "optional_missing"} for check in checks) else 5
 
 
+def command_route_catalog_verify(args: argparse.Namespace) -> int:
+    """Verify one candidate URL and persist route metadata only."""
+    catalog = RouteCatalog(_data_dir(args.data_dir))
+    record = catalog.verify(
+        venue=args.venue,
+        url=args.url,
+        source=args.source,
+        adapter=args.adapter,
+        route_kind=args.route_kind,
+        evidence_source=args.evidence_source,
+        client=default_client(),
+    )
+    sys.stdout.write(json.dumps(record.to_dict(), ensure_ascii=False, indent=2) + "\n")
+    return 0 if record.verification_state == "verified" else 3 if record.verification_state == "failed" else 2
+
+
+def command_route_catalog_list(args: argparse.Namespace) -> int:
+    """List route metadata; failed/rejected records remain inspectable."""
+    catalog = RouteCatalog(_data_dir(args.data_dir))
+    records = catalog.list_routes(venue=args.venue, verified_only=args.verified_only)
+    sys.stdout.write(
+        json.dumps(
+            {"venue": args.venue, "routes": [record.to_dict() for record in records]},
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n"
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -522,6 +554,25 @@ def build_parser() -> argparse.ArgumentParser:
     doctor = subparsers.add_parser("doctor", help="check headless server prerequisites")
     doctor.add_argument("--data-dir")
     doctor.set_defaults(func=command_doctor)
+
+    route_catalog = subparsers.add_parser("route-catalog", help="verify and inspect persistent venue routes")
+    route_commands = route_catalog.add_subparsers(dest="route_command", required=True)
+
+    route_verify = route_commands.add_parser("verify", help="verify one candidate URL and persist route metadata")
+    route_verify.add_argument("--venue", required=True)
+    route_verify.add_argument("--url", required=True)
+    route_verify.add_argument("--source", default="official")
+    route_verify.add_argument("--adapter")
+    route_verify.add_argument("--route-kind", default="landing")
+    route_verify.add_argument("--evidence-source", default="cli")
+    route_verify.add_argument("--data-dir")
+    route_verify.set_defaults(func=command_route_catalog_verify)
+
+    route_list = route_commands.add_parser("list", help="list persisted route metadata")
+    route_list.add_argument("--venue")
+    route_list.add_argument("--verified-only", action="store_true")
+    route_list.add_argument("--data-dir")
+    route_list.set_defaults(func=command_route_catalog_list)
     return parser
 
 

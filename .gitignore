@@ -18,6 +18,11 @@ logs/
 downloads/
 run.lock
 cron_prompt.md
+# A custom LLMSD_DATA_DIR may live inside a checkout; keep SQLite route
+# metadata and its WAL sidecars out of Git in that case as well.
+route_catalog.sqlite3
+route_catalog.sqlite3-shm
+route_catalog.sqlite3-wal
 
 # --- Secrets / env ---
 .env
