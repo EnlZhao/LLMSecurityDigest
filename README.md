@@ -12,6 +12,10 @@ MiniMax/Hermes 只负责搜索策略、关键词、过滤、排序、分类和�
 
 渲染器离线读取冻结的 `facts.json`。选择文件和分析文件一旦包含事实字段就会被拒绝。
 
+`materialize` 会将整个 facts snapshot 的 canonical SHA-256 写入
+`manifest.json`。渲染前必须验证该摘要；事后改写 facts 会被拒绝。渲染输出的
+日期也必须是有效的 ASCII `YYYY-MM-DD`，以防止路径跳转。
+
 ## 数据源与 Key
 
 | 来源 | 用途 | 是否需要 Key |
@@ -44,8 +48,9 @@ LLMSD_DATA_DIR=/persistent/path/llmsd-data
 `LLMSD_DATA_DIR` must be persistent on the headless server. `facts.json` stores
 paper files as paths relative to this directory, so Hermes can resume bounded
 reading after the candidate/materialize steps without depending on a temporary
-runner path. Older snapshots with absolute paths remain readable only when that
-path still exists.
+runner path. Reading rejects absolute paths, `..` components, and symlinks that
+resolve outside this directory; old snapshots with absolute content paths must
+be re-materialized before use.
 
 本地放在 `.env`；GitHub Actions 使用同名 Secret。`.env` 和 `.data/` 均不会提交。
 

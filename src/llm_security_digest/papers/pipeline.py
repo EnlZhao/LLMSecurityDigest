@@ -11,7 +11,16 @@ from urllib import parse
 
 from .content import extract_html, extract_pdf, persist_content
 from .http import HttpClient
-from .models import FACT_FIELDS, PaperFacts, SearchPlan, SelectionEntry, normalize_doi, normalize_title, utc_now
+from .models import (
+    FACT_FIELDS,
+    PaperFacts,
+    SearchPlan,
+    SelectionEntry,
+    facts_sha256,
+    normalize_doi,
+    normalize_title,
+    utc_now,
+)
 from .sources import (
     ArxivSource,
     CrossrefSource,
@@ -865,6 +874,7 @@ def materialize(
     manifest = {
         "schema_version": 1,
         "generated_at": utc_now(),
+        "facts_sha256": facts_sha256(facts),
         "status": "ok" if verified else "failed",
         "target": target,
         "published": len(verified),

@@ -34,6 +34,24 @@ Hermes cannot use a `core` label to override this boundary. An
 unverified paper must remain visible, and no shortfall is filled by an LLM
 guess or an automatic substitute.
 
+## Frozen snapshot boundary
+
+`materialize` writes the canonical SHA-256 of the complete `facts.json`
+payload to `manifest.json`; the offline renderer rejects a missing or unequal
+digest, invalid calendar date, or digest output that escapes the selected
+repository. Progressive-reading content paths must be relative to
+`LLMSD_DATA_DIR`; absolute paths, parent-directory components, and symlinks
+which resolve outside that data directory are rejected.
+
+This digest is an accidental-tamper and artifact-mismatch check, not a
+signature. A model process that has write access to both snapshots can replace
+both. Production must therefore run the baseline materializer and renderer as
+a dedicated service account which Hermes cannot write as; alternatively, keep
+the signing key in a systemd credential or external secret manager available
+only to the baseline service. Hermes may read the published snapshot and
+write selection/analysis artifacts, but it must not have write access to the
+materialization run directory or a signing credential.
+
 When the plan has keyword or date filtering, the baseline gives every source a
 small, bounded discovery buffer equal to `target`, then applies those filters
 to the script-parsed records. This prevents early alphabetical or newest-first

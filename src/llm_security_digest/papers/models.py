@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -23,6 +24,25 @@ FACT_FIELDS = {
     "pdf_url",
     "bibtex",
 }
+
+
+def facts_sha256(facts: dict[str, Any]) -> str:
+    """Return the stable SHA-256 identity of a complete facts payload.
+
+    Facts are canonicalized independently from the optional analysis artifact:
+    key ordering and insignificant JSON whitespace cannot change the digest,
+    while every field present in the facts payload remains covered.
+    """
+    if not isinstance(facts, dict):
+        raise TypeError("facts payload must be an object")
+    canonical = json.dumps(
+        facts,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _registry_key(value: str) -> str:

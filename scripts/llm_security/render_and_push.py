@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import time
+from datetime import date
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -15,7 +16,7 @@ SRC = REPO / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from llm_security_digest.papers.models import PaperFacts
+from llm_security_digest.papers.models import PaperFacts, facts_sha256
 from llm_security_digest.papers.pipeline import load_analysis, write_json
 
 
@@ -120,6 +121,43 @@ def git_push(repo: Path, date_str: str) -> tuple[bool, str]:
     return True, sha
 
 
+def _validate_date(value: str) -> str:
+    if not isinstance(value, str) or not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", value, flags=re.ASCII):
+        raise ValueError("date must be an ASCII YYYY-MM-DD value")
+    try:
+        date.fromisoformat(value)
+    except ValueError as exc:
+        raise ValueError("date must be a real calendar date") from exc
+    return value
+
+
+def _validated_repo(value: Path) -> Path:
+    try:
+        repo = Path(value).expanduser().resolve()
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise ValueError(f"invalid repository path: {value}") from exc
+    if not repo.is_dir():
+        raise ValueError(f"repository path is not an existing directory: {value}")
+    return repo
+
+
+def _validated_output_dir(repo: Path, date_str: str) -> Path:
+    digests = repo / "digests"
+    if digests.is_symlink():
+        raise ValueError("repository digests directory must not be a symlink")
+    if digests.exists() and not digests.is_dir():
+        raise ValueError("repository digests path is not a directory")
+    try:
+        output_dir = (digests / date_str).resolve()
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ValueError("invalid digest output path") from exc
+    try:
+        output_dir.relative_to(repo)
+    except ValueError as exc:
+        raise ValueError("digest output path escapes the repository") from exc
+    return output_dir
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--facts", type=Path, required=True)
@@ -131,11 +169,28 @@ def main() -> int:
     parser.add_argument("--push", action="store_true")
     args = parser.parse_args()
 
+    try:
+        date_str = _validate_date(args.date)
+        repo = _validated_repo(args.repo)
+        output_dir = _validated_output_dir(repo, date_str)
+    except ValueError as exc:
+        print(f"FATAL: {exc}", file=sys.stderr)
+        return 1
+
     facts_payload = json.loads(args.facts.read_text(encoding="utf-8"))
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     raw_papers = facts_payload.get("papers") if isinstance(facts_payload, dict) else None
     if not isinstance(raw_papers, list) or not isinstance(manifest, dict):
         print("FATAL: invalid facts or manifest snapshot", file=sys.stderr)
+        return 1
+    expected_facts_hash = manifest.get("facts_sha256")
+    try:
+        actual_facts_hash = facts_sha256(facts_payload)
+    except (TypeError, ValueError):
+        print("FATAL: invalid facts snapshot", file=sys.stderr)
+        return 1
+    if not isinstance(expected_facts_hash, str) or expected_facts_hash != actual_facts_hash:
+        print("FATAL: facts hash is missing or does not match the manifest", file=sys.stderr)
         return 1
     papers = [PaperFacts.from_dict(value) for value in raw_papers]
     if not papers:
@@ -157,12 +212,11 @@ def main() -> int:
         return 1
     analyses = load_analysis(args.analysis, {paper.paper_id for paper in papers})
 
-    output_dir = args.repo.resolve() / "digests" / args.date
     papers_dir = output_dir / "papers"
     papers_dir.mkdir(parents=True, exist_ok=True)
-    readme = render_readme(papers, analyses, args.date)
+    readme = render_readme(papers, analyses, date_str)
     (output_dir / "README.md").write_text(readme, encoding="utf-8")
-    bibtex_parts = [f"% LLM Security Daily — {args.date}", ""]
+    bibtex_parts = [f"% LLM Security Daily — {date_str}", ""]
     for index, paper in enumerate(papers, 1):
         bibtex_parts.extend([f"% [{index}] {paper.title}", paper.bibtex or "", ""])
         slug = re.sub(r"[^a-z0-9]+", "-", paper.title.casefold())[:48].strip("-")
@@ -175,9 +229,9 @@ def main() -> int:
     print(f"[render] wrote {len(papers)} verified papers to {output_dir}", file=sys.stderr)
 
     if args.build_site:
-        subprocess.run([sys.executable, str(args.repo / "scripts" / "build_github_pages.py")], cwd=args.repo, check=True)
+        subprocess.run([sys.executable, str(repo / "scripts" / "build_github_pages.py")], cwd=repo, check=True)
     if args.push:
-        ok, info = git_push(args.repo, args.date)
+        ok, info = git_push(repo, date_str)
         print(f"[push] {'OK' if ok else 'FAIL'}: {info}", file=sys.stderr)
         return 0 if ok else 2
     return 0

@@ -116,6 +116,8 @@ def command_collect(args: argparse.Namespace) -> int:
 
 
 def command_materialize(args: argparse.Namespace) -> int:
+    facts_path = _materialize_output_path(args.facts)
+    manifest_path = _materialize_output_path(args.manifest)
     payload = json.loads(args.candidates.read_text(encoding="utf-8"))
     selections = SelectionEntry.load_many(args.selection)
     plan = payload.get("plan") if isinstance(payload.get("plan"), dict) else {}
@@ -130,8 +132,8 @@ def command_materialize(args: argparse.Namespace) -> int:
         target=target,
         scholar_limit=scholar_limit,
     )
-    write_json(args.facts, facts)
-    write_json(args.manifest, manifest)
+    write_json(facts_path, facts)
+    write_json(manifest_path, manifest)
     print(
         f"[materialize] verified {manifest['published']}/{manifest['target']}; "
         f"rejected {len(manifest['rejected'])}",
@@ -258,14 +260,59 @@ def _load_paper(facts_path: Path, paper_id: str) -> dict:
     return matches[0]
 
 
+def _path_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _materialize_output_path(value: Path) -> Path:
+    """Resolve a materializer output and protect repository-owned files."""
+    try:
+        path = Path(value).expanduser().resolve()
+        repo = REPO.resolve()
+        cache = (repo / "cache").resolve()
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise ValueError(f"invalid materialize output path: {value}") from exc
+
+    if not _path_is_within(path, repo):
+        return path
+
+    relative_to_cache = None
+    if _path_is_within(path, cache):
+        relative_to_cache = path.relative_to(cache)
+    if relative_to_cache is not None and len(relative_to_cache.parts) >= 2:
+        run_dir = cache / relative_to_cache.parts[0]
+        if (
+            relative_to_cache.parts[0].startswith("run-")
+            and not run_dir.is_symlink()
+            and (not run_dir.exists() or run_dir.is_dir())
+        ):
+            return path
+    raise ValueError(
+        "materialize outputs inside the repository are restricted to a managed cache/run-* directory"
+    )
+
+
 def _content_path(paper: dict, key: str, data_dir: Path) -> Path:
     value = str(paper.get("content", {}).get(key, "")).strip()
     if not value:
         raise ValueError(f"paper content is missing {key}")
     path = Path(value)
-    # Facts produced before portable paths were introduced may still contain
-    # absolute paths. Keep them readable while all new snapshots stay portable.
-    return path if path.is_absolute() else (data_dir / path)
+    if path.is_absolute():
+        raise ValueError(f"paper content path must be relative: {key}")
+    if ".." in path.parts:
+        raise ValueError(f"paper content path contains a parent traversal: {key}")
+    try:
+        root = Path(data_dir).expanduser().resolve()
+        resolved = (root / path).resolve()
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise ValueError(f"invalid paper content path: {key}") from exc
+    if not _path_is_within(resolved, root) or resolved == root:
+        raise ValueError(f"paper content path escapes the data directory: {key}")
+    return resolved
 
 
 def command_outline(args: argparse.Namespace) -> int:
