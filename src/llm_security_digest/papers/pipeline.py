@@ -17,6 +17,7 @@ from .models import (
     SearchPlan,
     SelectionEntry,
     facts_sha256,
+    get_registered_venue_spec,
     normalize_doi,
     normalize_title,
     utc_now,
@@ -700,6 +701,24 @@ def _validate_candidate_identity(paper: PaperFacts) -> None:
         official_route_for_paper(paper)
 
 
+def _candidate_expected_venue(paper: PaperFacts, *, source: str) -> str | None:
+    """Return a registered venue scope for formal DOI refreshes when present."""
+    metadata = paper.source_metadata if isinstance(paper.source_metadata, dict) else {}
+    value = metadata.get("venue_group")
+    if value is None:
+        # ``source_metadata`` was added after the original candidate schema;
+        # keep old artifacts readable while binding current records below.
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("candidate venue_group must be a non-empty string")
+    spec = get_registered_venue_spec(value)
+    if spec is None:
+        raise ValueError(f"candidate venue_group is not registered: {value!r}")
+    if source not in spec.source_kinds:
+        raise ValueError(f"{source} source is not registered for venue: {value!r}")
+    return spec.key
+
+
 def refresh_authoritative(paper: PaperFacts, *, client: HttpClient) -> PaperFacts:
     """Re-fetch metadata for a selected ID so candidates cannot carry facts into output."""
     _validate_candidate_identity(paper)
@@ -708,9 +727,21 @@ def refresh_authoritative(paper: PaperFacts, *, client: HttpClient) -> PaperFact
     elif paper.source == "openreview":
         refreshed = OpenReviewSource(http_client=client).fetch_by_id(paper.source_id)
     elif paper.source == "crossref" and paper.doi:
-        refreshed = CrossrefSource(client).fetch_by_doi(paper.doi)
+        expected_venue = _candidate_expected_venue(paper, source="crossref")
+        source = CrossrefSource(client)
+        refreshed = (
+            source.fetch_by_doi(paper.doi, expected_venue=expected_venue)
+            if expected_venue is not None
+            else source.fetch_by_doi(paper.doi)
+        )
     elif paper.source == "ieee_xplore" and paper.doi:
-        refreshed = IeeeXploreSource(client).fetch_by_doi(paper.doi)
+        expected_venue = _candidate_expected_venue(paper, source="ieee_xplore")
+        source = IeeeXploreSource(client)
+        refreshed = (
+            source.fetch_by_doi(paper.doi, expected_venue=expected_venue)
+            if expected_venue is not None
+            else source.fetch_by_doi(paper.doi)
+        )
     elif paper.source in {"acl", "emnlp", "pmlr", "neurips", "aaai_ojs", "ijcai", "usenix", "ndss", "cvpr", "eccv", "ieee_csdl"}:
         # OfficialSource derives the detail URL from the baseline source/id
         # grammar. Candidate venue metadata and landing URLs are not routing

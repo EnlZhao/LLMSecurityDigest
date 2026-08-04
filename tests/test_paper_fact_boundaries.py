@@ -843,6 +843,47 @@ def test_crossref_unknown_publication_date_remains_unknown() -> None:
     assert papers[0].published_at is None
 
 
+def test_crossref_refresh_cannot_cross_registered_venue() -> None:
+    doi = "10.1109/TDSC.2026.1234567"
+    item = _crossref_item()
+    item.update({
+        "DOI": doi,
+        "container-title": ["IEEE Transactions on Dependable and Secure Computing"],
+        "ISSN": ["1545-5971"],
+    })
+    candidate = _paper(
+        paper_id=f"doi:{doi.lower()}",
+        source="crossref",
+        source_id=doi,
+        title="Crossref authoritative title",
+        authors=["Alice Example"],
+        doi=doi,
+    )
+    candidate.source_metadata = {"venue_group": "ieee-sp"}
+
+    with pytest.raises(ValueError, match="Crossref identity lookup returned 0 matches"):
+        pipeline.refresh_authoritative(candidate, client=_ResponseClient(_crossref_response(item)))
+
+
+def test_ieee_refresh_cannot_cross_registered_venue(monkeypatch) -> None:
+    doi = "10.1109/TDSC.2026.1234567"
+    item = _ieee_article()
+    item.update({"doi": doi, "publication_title": "IEEE Transactions on Dependable and Secure Computing"})
+    candidate = _paper(
+        paper_id=f"doi:{doi.lower()}",
+        source="ieee_xplore",
+        source_id=doi,
+        title="IEEE authoritative title",
+        authors=["Alice Example"],
+        doi=doi,
+    )
+    candidate.source_metadata = {"venue_group": "ieee-sp"}
+    monkeypatch.setenv("IEEE_XPLORE_API_KEY", "test-key")
+
+    with pytest.raises(ValueError, match="IEEE Xplore identity lookup returned 0 matches"):
+        pipeline.refresh_authoritative(candidate, client=_ResponseClient(_ieee_response(item)))
+
+
 def test_crossref_discovery_clips_api_over_return_to_venue_budget() -> None:
     first = _crossref_item()
     second = _crossref_item()
