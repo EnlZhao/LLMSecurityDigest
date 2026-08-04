@@ -703,12 +703,16 @@ def _validate_candidate_identity(paper: PaperFacts) -> None:
 
 def _candidate_expected_venue(paper: PaperFacts, *, source: str) -> str | None:
     """Return a registered venue scope for formal DOI refreshes when present."""
-    metadata = paper.source_metadata if isinstance(paper.source_metadata, dict) else {}
-    value = metadata.get("venue_group")
-    if value is None:
+    if paper.source_metadata in (None, {}):
+        return None
+    if not isinstance(paper.source_metadata, dict):
+        raise ValueError("candidate source_metadata must be an object")
+    metadata = paper.source_metadata
+    if "venue_group" not in metadata:
         # ``source_metadata`` was added after the original candidate schema;
         # keep old artifacts readable while binding current records below.
         return None
+    value = metadata["venue_group"]
     if not isinstance(value, str) or not value.strip():
         raise ValueError("candidate venue_group must be a non-empty string")
     spec = get_registered_venue_spec(value)
