@@ -37,10 +37,17 @@
       card.classList.toggle('is-hidden', !match);
       if (match) visible += 1;
     });
-    document.querySelectorAll('[data-category-section]').forEach(section => {
+    document.querySelectorAll('[data-group-section]').forEach(section => {
       section.classList.toggle('is-empty', !section.querySelector('.paper-card:not(.is-hidden)'));
     });
     if (visibleCount) visibleCount.textContent = String(visible);
+  });
+
+  document.querySelectorAll('.paper-detail').forEach(detail => {
+    detail.addEventListener('toggle', () => {
+      const hint = detail.querySelector('.details-hint');
+      if (hint) hint.textContent = detail.open ? '收起' : '展开';
+    });
   });
 
   document.querySelectorAll('.paper-action[href^="#paper-"]').forEach(link => {

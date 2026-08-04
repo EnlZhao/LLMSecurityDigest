@@ -10,12 +10,14 @@
 """
 from __future__ import annotations
 
+import json
 import re
 import shutil
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import unquote
 
 try:
     import frontmatter
@@ -32,6 +34,9 @@ REPO = Path(__file__).resolve().parents[1]
 DOCS = REPO / "docs"
 DIGESTS = REPO / "digests"
 NOTES = REPO / "notes"
+DAILY = REPO / "DAILY.md"
+
+BUCKETS = ("main_track", "others")
 
 SITE_TITLE = "LLM Security Digest"
 SITE_DESC = "Daily LLM Security papers — top venue & arxiv, bilingual EN/ZH summaries"
@@ -152,13 +157,16 @@ def render_digest_page(date_str: str, readme_path: Path) -> str:
     md = frontmatter.load(readme_path)
     body_html = md_to_html(md.content)
     papers = parse_papers_from_md(md.content)
+    manifest = load_manifest(readme_path.parent / "manifest.json", required=True)
+    assign_manifest_buckets(papers, manifest, load_fact_ids(readme_path.parent / "facts.json"))
     attach_card_figures(papers)
+    main_track_label = read_main_track_label()
 
     # Sidebar: TOC + category jump + paper jump
-    sidebar_html = render_digest_sidebar(papers, date_str)
+    sidebar_html = render_digest_sidebar(papers, date_str, main_track_label)
 
     # Hero + paper cards
-    main_html = render_digest_main(papers, date_str)
+    main_html = render_digest_main(papers, date_str, main_track_label)
 
     body = f"""
 <div class="two-col">
@@ -194,14 +202,124 @@ def _bilingual_value(body: str, label: str, lang: str = "ZH") -> str:
     return match.group(1).strip() if match else ""
 
 
+def load_manifest(path: Path, *, required: bool = False) -> dict:
+    """Load the immutable daily manifest used for paper bucket assignment."""
+    if not path.is_file():
+        if required:
+            raise ValueError(f"missing daily manifest: {path}")
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        if required:
+            raise ValueError(f"invalid daily manifest: {path}")
+        return {}
+    if not isinstance(data, dict):
+        if required:
+            raise ValueError(f"invalid daily manifest: {path}")
+        return {}
+    return data
+
+
+def load_fact_ids(path: Path) -> list[str]:
+    """Read frozen paper IDs so formal-venue cards match manifest decisions."""
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    raw_papers = data.get("papers") if isinstance(data, dict) else None
+    if not isinstance(raw_papers, list):
+        return []
+    return [
+        str(item.get("paper_id", "")).strip() if isinstance(item, dict) else ""
+        for item in raw_papers
+    ]
+
+
+def read_main_track_label() -> str:
+    """Read the user-owned current track name from DAILY.md §1.1."""
+    try:
+        content = DAILY.read_text(encoding="utf-8")
+    except OSError:
+        return "Main Track"
+    match = re.search(
+        r"\*\*Current main track \(phase-dependent\):\*\*\s*`([^`]+)`",
+        content,
+    )
+    return re.sub(r"\s+", " ", match.group(1)).strip() if match else "Main Track"
+
+
+def _paper_id_from_url(url: str) -> str:
+    cleaned = url.strip().rstrip(".,")
+    match = re.search(r"arxiv\.org/(?:abs|pdf)/([^?#]+)", cleaned, re.IGNORECASE)
+    if match:
+        arxiv_id = re.sub(r"\.pdf$", "", match.group(1).rstrip("/."), flags=re.IGNORECASE)
+        arxiv_id = re.sub(r"v\d+$", "", arxiv_id, flags=re.IGNORECASE)
+        return f"arxiv:{arxiv_id}"
+    doi_match = re.search(
+        r"(?:doi\.org/|/doi/)(10\.\d{4,9}/[^\s?#]+)", cleaned, re.IGNORECASE
+    )
+    if doi_match:
+        return f"doi:{unquote(doi_match.group(1)).rstrip('.,/').lower()}"
+    openreview_match = re.search(
+        r"openreview\.net/(?:forum|pdf)\?id=([^&#]+)", cleaned, re.IGNORECASE
+    )
+    if openreview_match:
+        return f"openreview:{unquote(openreview_match.group(1))}"
+    return cleaned
+
+
+def _manifest_bucket_map(manifest: dict) -> dict[str, str]:
+    decisions = manifest.get("selection_decisions")
+    if not isinstance(decisions, dict):
+        return {}
+
+    assignments: dict[str, str] = {}
+    for decision_key, decision in decisions.items():
+        if not isinstance(decision, dict):
+            continue
+        bucket = str(decision.get("bucket", "")).strip().lower().replace("-", "_")
+        if not bucket:
+            # Normal materialize manifests use the legacy track names. They
+            # are the pipeline's core/broad quota, not display categories.
+            track = str(decision.get("track", "")).strip().lower().replace("-", "_")
+            bucket = {"core": "main_track", "broad": "others"}.get(track, "others")
+        normalized = "main_track" if bucket == "main_track" else "others"
+        for paper_id in (decision_key, decision.get("paper_id")):
+            if paper_id:
+                assignments[str(paper_id).strip()] = normalized
+    return assignments
+
+
+def assign_manifest_buckets(papers: list[dict], manifest: dict, fact_ids: list[str] | None = None) -> None:
+    """Attach only the two manifest buckets; unmatched papers stay in Others."""
+    assignments = _manifest_bucket_map(manifest)
+    fact_ids = fact_ids or []
+    for index, paper in enumerate(papers):
+        candidate_ids = [paper.get("paper_id", "")]
+        if index < len(fact_ids):
+            candidate_ids.append(fact_ids[index])
+        paper["bucket"] = next(
+            (assignments[paper_id] for paper_id in candidate_ids if paper_id in assignments),
+            "others",
+        )
+
+
+def bucket_label(bucket: str, main_track_label: str, *, detailed: bool = True) -> str:
+    if bucket == "main_track":
+        return main_track_label if detailed else "Main Track"
+    return "Others"
+
+
+def bucket_anchor(bucket: str) -> str:
+    return f"cat-{bucket.replace('_', '-')}"
+
+
 def parse_papers_from_md(content: str) -> list[dict]:
     """Parse the display fields used by the daily paper cards."""
     papers = []
-    category_by_num: dict[int, str] = {}
-    for cat_match in re.finditer(r"^- \*\*[A-Z]\.\s*(.+?)\*\*[：:]\s*(.+)$", content, re.MULTILINE):
-        category_name, paper_refs = cat_match.groups()
-        for number in re.findall(r"#(\d+)", paper_refs):
-            category_by_num[int(number)] = category_name.strip()
     # Each paper starts with ### [N].
     pattern = re.compile(
         r"### \[(\d+)\]\.\s*(.+?)\n(.*?)(?=\n### \[|\n## |$)", re.DOTALL
@@ -215,12 +333,15 @@ def parse_papers_from_md(content: str) -> list[dict]:
             "num": num,
             "title": title,
             "category": "",
+            "bucket": "others",
+            "paper_id": "",
             "abstract_en": "",
             "abstract_zh": "",
             "authors": "",
             "source": "",
             "url": "",
             "problem": "",
+            "contribution": "",
             "method": "",
             "result": "",
         }
@@ -229,14 +350,12 @@ def parse_papers_from_md(content: str) -> list[dict]:
         m_cat = re.search(r"\*\*分类\*\*[：:]\s*(.+)", body)
         if m_cat:
             paper["category"] = m_cat.group(1).strip()
-        if num in category_by_num:
-            paper["category"] = category_by_num[num]
 
         # Find Abstract block
         m_abs = re.search(r"\*\*Abstract \(EN[^\)]*\)\*\*[：:]\s*(.+?)(?=\n\*\*摘要 \(中文\)|\n\*\*问题|\Z)", body, re.DOTALL)
         if m_abs:
             paper["abstract_en"] = m_abs.group(1).strip().strip(">").strip()
-        m_abs_zh = re.search(r"\*\*摘要 \(中文\)\*\*[：:]\s*(.+?)(?=\n\*\*问题|\Z)", body, re.DOTALL)
+        m_abs_zh = re.search(r"\*\*摘要 \(中文[^\)]*\)\*\*[：:]\s*(.+?)(?=\n\*\*问题|\Z)", body, re.DOTALL)
         if m_abs_zh:
             paper["abstract_zh"] = m_abs_zh.group(1).strip()
 
@@ -247,7 +366,9 @@ def parse_papers_from_md(content: str) -> list[dict]:
         paper["url"] = markdown_urls[0] if markdown_urls else (
             re.search(r"https?://\S+", link_line).group(0) if re.search(r"https?://\S+", link_line) else ""
         )
+        paper["paper_id"] = _paper_id_from_url(paper["url"])
         paper["problem"] = _bilingual_value(body, "问题")
+        paper["contribution"] = _bilingual_value(body, "贡献")
         paper["method"] = _bilingual_value(body, "方法")
         paper["result"] = _bilingual_value(body, "结果")
 
@@ -301,18 +422,23 @@ def attach_card_figures(papers: list[dict]) -> None:
             paper["card_figure"] = figures_by_arxiv[match.group(1).rstrip(".")]
 
 
-def render_digest_sidebar(papers: list[dict], date_str: str) -> str:
-    # Group by category
-    by_cat = {}
-    for p in papers:
-        cat = p["category"] or "Other"
-        by_cat.setdefault(cat, []).append(p)
+def group_papers(papers: list[dict]) -> dict[str, list[dict]]:
+    grouped = {bucket: [] for bucket in BUCKETS}
+    for paper in papers:
+        bucket = paper.get("bucket", "others")
+        grouped["main_track" if bucket == "main_track" else "others"].append(paper)
+    return grouped
 
-    cat_html = '<div class="sidebar-section"><div class="sidebar-title">研究方向</div><ul class="sidebar-cat-list">'
-    for cat, ps in by_cat.items():
-        anchor = slugify(cat)
-        tag_cls = category_tag_class(cat)
-        cat_html += f'<li><a class="cat-pill tag-{tag_cls}" href="#cat-{anchor}">{cat}</a> <span class="muted">({len(ps)})</span></li>'
+
+def render_digest_sidebar(papers: list[dict], date_str: str, main_track_label: str) -> str:
+    grouped = group_papers(papers)
+
+    cat_html = '<div class="sidebar-section"><div class="sidebar-title">分组</div><ul class="sidebar-cat-list">'
+    for bucket in BUCKETS:
+        label = bucket_label(bucket, main_track_label)
+        short_label = bucket_label(bucket, main_track_label, detailed=False)
+        suffix = f" · {escape_html(label)}" if bucket == "main_track" and label != short_label else ""
+        cat_html += f'<li><a class="cat-pill" href="#{bucket_anchor(bucket)}"><span>{short_label}</span>{suffix}</a> <span class="muted">({len(grouped[bucket])})</span></li>'
     cat_html += "</ul></div>"
 
     # Paper list
@@ -335,21 +461,18 @@ def render_digest_sidebar(papers: list[dict], date_str: str) -> str:
 """
 
 
-def render_digest_main(papers: list[dict], date_str: str) -> str:
-    by_cat = {}
-    for p in papers:
-        cat = p["category"] or "Other"
-        by_cat.setdefault(cat, []).append(p)
+def render_digest_main(papers: list[dict], date_str: str, main_track_label: str) -> str:
+    grouped = group_papers(papers)
 
     human_date = datetime.strptime(date_str, "%Y-%m-%d").strftime("%Y 年 %m 月 %d 日")
     html = f"""
 <header class="digest-hero">
   <div class="eyebrow"><span class="live-dot"></span> DAILY PAPER · {escape_html(human_date)}</div>
   <h1>Daily Papers</h1>
-  <p class="lead">{len(papers)} 篇 · {len(by_cat)} 个研究方向 · 中英文摘要与核心结论</p>
+  <p class="lead">{len(papers)} 篇 · {len(BUCKETS)} 个分组 · 中英文摘要与核心结论</p>
   <div class="quick-stats" aria-label="本期统计">
     <span class="stat"><strong>{len(papers)}</strong><small>篇论文</small></span>
-    <span class="stat"><strong>{len(by_cat)}</strong><small>个方向</small></span>
+    <span class="stat"><strong>{len(BUCKETS)}</strong><small>个分组</small></span>
     <span class="stat"><strong>中 / EN</strong><small>双语摘要</small></span>
   </div>
 </header>
@@ -359,10 +482,12 @@ def render_digest_main(papers: list[dict], date_str: str) -> str:
 </div>
 """
 
-    for cat, ps in by_cat.items():
-        anchor = slugify(cat)
-        tag_cls = category_tag_class(cat)
-        html += f'<section id="cat-{anchor}" class="cat-section" data-category-section><div class="cat-heading"><div><span class="cat-kicker">TOPIC</span><h2>{escape_html(cat)}</h2></div><span class="cat-count">{len(ps):02d}</span></div>'
+    for bucket in BUCKETS:
+        ps = grouped[bucket]
+        anchor = bucket_anchor(bucket)
+        heading = bucket_label(bucket, main_track_label)
+        kicker = bucket_label(bucket, main_track_label, detailed=False).upper()
+        html += f'<section id="{anchor}" class="cat-section" data-group-section><div class="cat-heading"><div><span class="cat-kicker">{kicker}</span><h2>{escape_html(heading)}</h2></div><span class="cat-count">{len(ps):02d}</span></div>'
         for p in ps:
             html += render_paper_card(p)
         html += "</section>"
@@ -373,7 +498,6 @@ def render_digest_main(papers: list[dict], date_str: str) -> str:
 def render_paper_card(p: dict) -> str:
     n = p["num"]
     title = escape_html(p["title"])
-    cat = escape_html(p["category"])
     abs_en = p.get("abstract_en", "").strip()
     abs_zh = p.get("abstract_zh", "").strip()
     source = escape_html(p.get("source", ""))
@@ -393,11 +517,18 @@ def render_paper_card(p: dict) -> str:
     elif abs_en:
         zh_html = '<div class="abstract-missing muted">（中文摘要未生成）</div>'
 
-    insights = []
-    for label, key in (("研究问题", "problem"), ("核心方法", "method"), ("主要结果", "result")):
-        if p.get(key):
-            insights.append(f'<div class="insight-item"><span>{label}</span><p>{escape_html(p[key])}</p></div>')
-    insight_html = f'<div class="insight-grid">{"".join(insights)}</div>' if insights else ""
+    insight_sections = []
+    for label, key in (
+        ("问题 / Problem", "problem"),
+        ("创新与贡献 / Innovation / Contribution", "contribution"),
+        ("技术细节 / Technical details", "method"),
+        ("实验结果 / Experiment results", "result"),
+    ):
+        value = p.get(key, "").strip() or "（暂无内容）"
+        insight_sections.append(
+            f'<details class="paper-detail"><summary><span>{label}</span><span class="details-hint">展开</span></summary><p>{escape_html(value)}</p></details>'
+        )
+    insight_html = f'<div class="paper-insights">{"".join(insight_sections)}</div>'
     source_html = f'<span class="venue-chip">{source}</span>' if source else ""
     author_html = f'<span class="authors">{authors}</span>' if authors else ""
     external_html = f'<a class="paper-action primary" href="{url}" target="_blank" rel="noreferrer">阅读原文 <span>↗</span></a>' if url else ""
@@ -412,8 +543,13 @@ def render_paper_card(p: dict) -> str:
             '<span><b>系统图</b><small>点击查看大图，不占用首屏加载</small></span><strong>↗</strong></button>'
         )
 
+    search_text = " ".join(
+        p.get(key, "")
+        for key in ("title", "authors", "abstract_zh", "problem", "contribution", "method", "result")
+    ).lower()
+
     return f"""
-<article id="paper-{n}" class="paper-card" data-paper-search="{escape_html((p['title'] + ' ' + p.get('authors','') + ' ' + p.get('abstract_zh','')).lower())}">
+<article id="paper-{n}" class="paper-card" data-paper-search="{escape_html(search_text)}">
   <div class="card-head">
     <span class="paper-num">{n:02d}</span>
     <div class="paper-heading">
@@ -443,21 +579,6 @@ def escape_html(s: str) -> str:
              .replace(">", "&gt;")
              .replace('"', "&quot;")
              .replace("'", "&#39;"))
-
-
-def category_tag_class(cat: str) -> str:
-    c = cat.lower()
-    if "jailbreak" in c or "prompt injection" in c:
-        return "jailbreak"
-    if "privacy" in c or "inference" in c:
-        return "privacy"
-    if "backdoor" in c or "adversarial" in c:
-        return "backdoor"
-    if "alignment" in c or "safety" in c:
-        return "alignment"
-    if "agent" in c:
-        return "agent"
-    return "llm-sec"
 
 
 # -----------------------------------------------------------------------------
@@ -569,6 +690,12 @@ def render_index() -> str:
         latest_readme = DIGESTS / latest_date / "README.md"
         if latest_readme.exists():
             latest_papers = parse_papers_from_md(frontmatter.load(latest_readme).content)
+            latest_manifest_path = latest_readme.parent / "manifest.json"
+            assign_manifest_buckets(
+                latest_papers,
+                load_manifest(latest_manifest_path, required=True),
+                load_fact_ids(latest_readme.parent / "facts.json"),
+            )
 
     latest_href = f"digest/{latest_date}.html" if latest_date else "archive.html"
     main_html = f"""
@@ -604,10 +731,11 @@ def render_index() -> str:
     for paper in latest_papers[:4]:
         summary = paper.get("abstract_zh", "")
         summary = summary[:110] + ("…" if len(summary) > 110 else "")
+        preview_label = bucket_label(paper.get("bucket", "others"), "", detailed=False)
         main_html += f"""
         <a class="paper-preview" href="{latest_href}#paper-{paper['num']}">
           <span class="preview-num">{paper['num']:02d}</span>
-          <span class="preview-copy"><span class="preview-topic">{escape_html(paper.get('category',''))}</span><strong>{escape_html(paper['title'])}</strong><small>{escape_html(summary)}</small></span>
+          <span class="preview-copy"><span class="preview-topic">{preview_label}</span><strong>{escape_html(paper['title'])}</strong><small>{escape_html(summary)}</small></span>
           <span class="preview-arrow">↗</span>
         </a>
 """
