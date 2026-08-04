@@ -160,7 +160,9 @@ def render_digest_page(date_str: str, readme_path: Path) -> str:
     manifest = load_manifest(readme_path.parent / "manifest.json", required=True)
     assign_manifest_buckets(papers, manifest, load_fact_ids(readme_path.parent / "facts.json"))
     attach_card_figures(papers)
-    main_track_label = read_main_track_label()
+    # A daily manifest freezes the track label for historical pages.  Fall
+    # back to the current user-owned statement only for older manifests.
+    main_track_label = str(manifest.get("main_track", "")).strip() or read_main_track_label()
 
     # Sidebar: TOC + category jump + paper jump
     sidebar_html = render_digest_sidebar(papers, date_str, main_track_label)
@@ -189,12 +191,67 @@ def render_digest_page(date_str: str, readme_path: Path) -> str:
 
 
 def _field(body: str, label: str, stop: str = r"\n\*\*") -> str:
-    match = re.search(rf"\*\*{label}\*\*[：:]\s*(.+?)(?={stop}|\Z)", body, re.DOTALL)
+    match = re.search(
+        rf"^\*\*{label}\*\*[：:][ \t]*(.*?)(?={stop}|\Z)",
+        body,
+        re.DOTALL | re.MULTILINE,
+    )
     return match.group(1).strip() if match else ""
 
 
+def _marked_fields(body: str) -> list[tuple[str, str]]:
+    """Read block fields without treating inline Markdown as a new field."""
+    return re.findall(
+        r"(?ms)^\*\*(?P<label>[^*\n]+)\*\*[：:]\s*"
+        r"(?P<value>.*?)(?=^\*\*[^*\n]+\*\*[：:]|\Z)",
+        body,
+    )
+
+
+def _analysis_field(body: str, labels: tuple[str, ...]) -> str:
+    """Return a complete Chinese analysis block by its bilingual heading."""
+    aliases = tuple(re.sub(r"\s+", " ", label).strip().casefold() for label in labels)
+    for label, value in _marked_fields(body):
+        normalized = re.sub(r"\s+", " ", label).strip().casefold()
+        if any(
+            normalized == alias
+            or normalized.startswith(f"{alias} ")
+            or normalized.startswith(f"{alias}/")
+            or normalized.startswith(f"{alias} /")
+            or normalized.startswith(f"{alias}(")
+            or normalized.startswith(f"{alias}（")
+            for alias in aliases
+        ):
+            return value.strip()
+    return ""
+
+
+def _marked_field_prefix(body: str, prefixes: tuple[str, ...]) -> str:
+    """Read a complete marked field whose label starts with one of prefixes."""
+    normalized_prefixes = tuple(
+        re.sub(r"\s+", " ", prefix).strip().casefold() for prefix in prefixes
+    )
+    for label, value in _marked_fields(body):
+        normalized = re.sub(r"\s+", " ", label).strip().casefold()
+        if any(normalized.startswith(prefix) for prefix in normalized_prefixes):
+            return value.strip()
+    return ""
+
+
+def _unquote_abstract(value: str) -> str:
+    """Remove only the blockquote prefix added by the Markdown renderer."""
+    text = value.strip()
+    lines = text.split("\n")
+    if not lines or not lines[0].startswith(">"):
+        return text
+    return "\n".join(
+        line[2:] if line.startswith("> ") else line[1:] if line == ">" else line
+        for line in lines
+    ).strip()
+
+
 def _bilingual_value(body: str, label: str, lang: str = "ZH") -> str:
-    generated = _field(body, rf"{label}（LLM 解读）")
+    generated = _analysis_field(body, (label,))
     if generated:
         return generated
     block = _field(body, rf"{label} \(原文 \+ 中文\)")
@@ -351,13 +408,13 @@ def parse_papers_from_md(content: str) -> list[dict]:
         if m_cat:
             paper["category"] = m_cat.group(1).strip()
 
-        # Find Abstract block
-        m_abs = re.search(r"\*\*Abstract \(EN[^\)]*\)\*\*[：:]\s*(.+?)(?=\n\*\*摘要 \(中文\)|\n\*\*问题|\Z)", body, re.DOTALL)
-        if m_abs:
-            paper["abstract_en"] = m_abs.group(1).strip().strip(">").strip()
-        m_abs_zh = re.search(r"\*\*摘要 \(中文[^\)]*\)\*\*[：:]\s*(.+?)(?=\n\*\*问题|\Z)", body, re.DOTALL)
-        if m_abs_zh:
-            paper["abstract_zh"] = m_abs_zh.group(1).strip()
+        # Find complete abstract blocks, including the migrated ZH heading.
+        paper["abstract_en"] = _unquote_abstract(
+            _marked_field_prefix(body, ("Abstract (EN",))
+        )
+        paper["abstract_zh"] = _marked_field_prefix(
+            body, ("摘要 (中文", "Abstract (ZH")
+        )
 
         paper["authors"] = _field(body, "作者", r"\n\*\*")
         paper["source"] = _field(body, "会议/来源", r"\n\*\*")
@@ -367,10 +424,14 @@ def parse_papers_from_md(content: str) -> list[dict]:
             re.search(r"https?://\S+", link_line).group(0) if re.search(r"https?://\S+", link_line) else ""
         )
         paper["paper_id"] = _paper_id_from_url(paper["url"])
-        paper["problem"] = _bilingual_value(body, "问题")
-        paper["contribution"] = _bilingual_value(body, "贡献")
-        paper["method"] = _bilingual_value(body, "方法")
-        paper["result"] = _bilingual_value(body, "结果")
+        paper["problem"] = _analysis_field(body, ("问题", "Problem")) or _bilingual_value(body, "问题")
+        paper["contribution"] = _analysis_field(
+            body, ("创新与贡献", "Innovation / Contribution", "贡献", "Innovation")
+        ) or _bilingual_value(body, "贡献")
+        paper["method"] = _analysis_field(body, ("技术细节", "Technical details", "方法")) or _bilingual_value(body, "方法")
+        paper["result"] = _analysis_field(
+            body, ("实验结果", "Experiment results", "结果")
+        ) or _bilingual_value(body, "结果")
 
         papers.append(paper)
     return papers
@@ -506,10 +567,7 @@ def render_paper_card(p: dict) -> str:
 
     en_html = ""
     if abs_en:
-        # Strip blockquote markers
-        en_text = abs_en.replace("> ", "").strip()
-        en_text = re.sub(r"\n\s*\n", "\n\n", en_text)
-        en_html = f'<details class="abs-en"><summary><span>English abstract</span><span class="details-hint">展开原文 ＋</span></summary><blockquote>{escape_html(en_text)}</blockquote></details>'
+        en_html = f'<details class="abs-en"><summary><span>English abstract</span><span class="details-hint">展开原文 ＋</span></summary><blockquote>{escape_html(abs_en)}</blockquote></details>'
 
     zh_html = ""
     if abs_zh:
@@ -519,10 +577,10 @@ def render_paper_card(p: dict) -> str:
 
     insight_sections = []
     for label, key in (
-        ("问题 / Problem", "problem"),
-        ("创新与贡献 / Innovation / Contribution", "contribution"),
-        ("技术细节 / Technical details", "method"),
-        ("实验结果 / Experiment results", "result"),
+        ("Problem / 问题", "problem"),
+        ("Innovation / Contribution / 创新与贡献", "contribution"),
+        ("Technical details / 技术细节", "method"),
+        ("Experiment results / 实验结果", "result"),
     ):
         value = p.get(key, "").strip() or "（暂无内容）"
         insight_sections.append(

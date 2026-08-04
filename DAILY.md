@@ -252,12 +252,12 @@ of problem (not a single case), the expected metric, and the
 authorising human. A candidate without a class-of-problem rationale
 is rejected on review.
 
-## 6. Five-Dimension Card Contract
+## 6. Paper Card Content Contract
 
-Each published paper produces a `paper card` with these fields in
-this order. The LLM is responsible for the bilingual abstract and
-the five interpretive dimensions. The Python pipeline is
-responsible for everything else.
+Each published paper produces a `paper card` with these fields in this order.
+The LLM is responsible for the complete bilingual abstract and four Chinese
+interpretive dimensions. The Python pipeline is responsible for everything
+else.
 
 ### 6.1 Main track and tags
 
@@ -292,15 +292,13 @@ paper to `main_track`; that decision is the user's.
 | `doi` | `facts.json` | yes if assigned, else `not_provided` | |
 | `bibtex` | `facts.json` | yes | |
 | `summary_en` | `facts.json.abstract` | yes | Verbatim copy, no rewriting |
-| `summary_zh` | LLM | yes | ≤ 200 Chinese characters |
-| `background_zh` | LLM | yes | The field the paper sits in; grounded in at least one `section_id` |
-| `limitation_zh` | LLM | yes | What gap the paper claims to close; ground in `sec:intro` or `sec:related` |
-| `motivation_zh` | LLM | yes | Why the authors wrote it; ground in `sec:intro` |
-| `contribution_zh` | LLM | yes | 3–5 bullets; each tied to a `section_id` |
-| `tech_innovation_zh` | LLM | yes | Algorithm / architecture / evaluation novelty; ground in `sec:method` |
-| `result_zh` | LLM | yes | What the paper reports as the headline result; ground in `sec:experiments` |
+| `summary_zh` | LLM | yes | Complete academic Chinese translation of `facts.json.abstract`; no character cap |
+| `problem_zh` | LLM | yes | Complete Chinese synthesis of the research problem, grounded in the translated abstract and paper sections |
+| `contribution_zh` | LLM | yes | Complete Chinese synthesis of innovation/contribution, grounded in the translated abstract and paper sections |
+| `method_zh` | LLM | yes | Complete Chinese synthesis of technical details, grounded in `sec:method` when available |
+| `result_zh` | LLM | yes | Complete Chinese synthesis of experiment results, grounded in `sec:experiments` when available |
 
-Every LLM-written dimension ends with a citation in the form
+Every LLM-written dimension should include citations in the form
 `(sec:<id>, p.<n>)` or `(sec:<id>)`. The renderer turns those into
 links to the cached outline.
 
@@ -313,7 +311,7 @@ Triggers (any one is enough):
 - A new venue that has been requested ≥ 3 times is not in the URL
   table
 - A user flags a recurring class of bad interpretation
-- The 5-dim dimensions exceed the length budget on ≥ 2 papers
+- The four card dimensions are truncated or materially incomplete on ≥ 2 papers
 
 Process (must follow this order):
 

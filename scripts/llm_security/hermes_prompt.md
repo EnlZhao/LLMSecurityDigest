@@ -34,13 +34,17 @@ You orchestrate the daily run, but scripts own every paper fact.
   authoritative abstract, and bounded full-text sections to name the research
   direction. Never use platform/source labels such as `arXiv`, `OpenReview`, a
   conference or journal name, or subject codes such as `cs.CR` as a category.
-- In Chinese analysis, separate direct statements supported by the frozen paper
+- In Chinese analysis, first translate the complete authoritative abstract into
+  academic Chinese as `summary_zh`. Do not emit an English fragment, an
+  ellipsis, or a character-limited condensation. `problem_zh` must state the
+  research question, research problem, and gap. Then derive `contribution_zh`,
+  `method_zh`, and `result_zh` from that Chinese synthesis
+  plus the bounded full-text evidence; do not copy fragments directly from the
+  English abstract. Separate direct statements supported by the frozen paper
   from your interpretation. Explain the problem, method, evidence/results,
   contribution, limitations, and applicability when the bounded sections
   support them. State uncertainty rather than inferring a result from missing
-  text. `summary_zh` must summarize the research question, method, and
-  supported evidence/results; it must not describe the hosting or discovery
-  platform instead of the research.
+  text. The four fields have no character budget and must be written in full.
 
 The rendered digest groups papers by research direction first. Within each
 paper, mark the formal venue when one is verified, or label an unmatched paper
@@ -163,10 +167,11 @@ and adapted to the LLMSecurityDigest pipeline.
    grounded in at least one `outline` section, `read-section` chunk, or
    `find` query hit. An interpretation built only from `summary_en` is
    rejected by the grounding lint.
-2. **Five dimensions, in this order**: `background_zh`,
-   `limitation_zh`, `motivation_zh`, `contribution_zh`,
-   `tech_innovation_zh`. Each ≤ 200 Chinese characters, each followed by a
-   citation of the form `(sec:<id>, p.<n>)` or `(sec:<id>)`. The bucket
+2. **Four card dimensions, in this order**: `problem_zh`, `contribution_zh`,
+   `method_zh`, and `result_zh`. Each is a complete Chinese synthesis grounded
+   in the translated abstract and relevant evidence; no output character cap
+   applies. Each central claim should be followed by a citation of the form
+   `(sec:<id>, p.<n>)` or `(sec:<id>)`. The bucket
    (`main_track` or `others`) follows the current main track statement in
    `DAILY.md` §1.1; only the user changes that statement. The only tag
    recorded on a paper is the venue axis (`venue:<short>`); the LLM does

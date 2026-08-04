@@ -19,13 +19,63 @@ if str(SRC) not in sys.path:
 from llm_security_digest.papers.models import PaperFacts, facts_sha256
 from llm_security_digest.papers.pipeline import load_analysis, write_json
 
+BUCKETS = ("main_track", "others")
+
 
 def _analysis_value(analysis: dict, key: str, default: str = "（待解读）") -> str:
     value = analysis.get(key)
-    return str(value).strip() if value is not None and str(value).strip() else default
+    if value is None:
+        return default
+    text = str(value)
+    return text if text.strip() else default
 
 
-def render_paper_md(paper: PaperFacts, analysis: dict, idx: int) -> str:
+def _markdown_blockquote(text: str) -> str:
+    """Keep every source line inside the Markdown blockquote."""
+    return "\n".join(
+        f"> {line}" if line else ">"
+        for line in str(text).split("\n")
+    )
+
+
+def _manifest_bucket_map(manifest: dict) -> dict[str, str]:
+    decisions = manifest.get("selection_decisions")
+    if not isinstance(decisions, dict):
+        return {}
+    assignments: dict[str, str] = {}
+    for decision_key, decision in decisions.items():
+        if not isinstance(decision, dict):
+            continue
+        bucket = str(decision.get("bucket", "")).strip().lower().replace("-", "_")
+        if not bucket:
+            track = str(decision.get("track", "")).strip().lower().replace("-", "_")
+            bucket = {"core": "main_track", "broad": "others"}.get(track, "others")
+        normalized = "main_track" if bucket == "main_track" else "others"
+        for paper_id in (decision_key, decision.get("paper_id")):
+            if paper_id:
+                assignments[str(paper_id).strip()] = normalized
+    return assignments
+
+
+def _bucket_label(bucket: str, main_track_label: str) -> str:
+    if bucket == "main_track":
+        return main_track_label or "Main Track"
+    return "Others"
+
+
+def render_paper_md(
+    paper: PaperFacts,
+    analysis: dict,
+    idx: int,
+    *,
+    bucket: str = "others",
+    main_track_label: str = "",
+) -> str:
+    # Older materialized snapshots used a text sentinel for an absent DOI.
+    # Normalize it only on the in-memory model; the frozen facts snapshot is
+    # written back verbatim and remains the source of record.
+    if paper.doi == "not_provided":
+        paper.doi = None
     paper.validate_materialized()
     authors = ", ".join(paper.authors)
     source = f"正式 venue：{paper.venue}" if paper.venue else "arXiv 预印本"
@@ -43,33 +93,34 @@ def render_paper_md(paper: PaperFacts, analysis: dict, idx: int) -> str:
 
 **作者**：{authors}
 **研究类别**：{category}
+**分组**：{_bucket_label(bucket, main_track_label)}
 **会议/来源**：{source} ({published_date})
 {source_comment}**链接**：[论文主页]({paper.landing_url}) | [正文]({paper.pdf_url}){scholar_line}
 **分类**：{classification}
 
 **Abstract (EN — 权威来源原文)**：
 
-> {paper.abstract}
+{_markdown_blockquote(paper.abstract)}
 
-**摘要 (中文，LLM 生成)**：
+**Abstract (ZH — 学术中文翻译，LLM 生成)**：
 
 {_analysis_value(analysis, 'summary_zh')}
 
-**问题（LLM 解读）**：
+**问题 / Problem（LLM 解读）**：
 
 {_analysis_value(analysis, 'problem_zh')}
 
-**方法（LLM 解读）**：
+**创新与贡献 / Innovation / Contribution（LLM 解读）**：
+
+{_analysis_value(analysis, 'contribution_zh')}
+
+**技术细节 / Technical details（LLM 解读）**：
 
 {_analysis_value(analysis, 'method_zh')}
 
-**结果（LLM 解读）**：
+**实验结果 / Experiment results（LLM 解读）**：
 
 {_analysis_value(analysis, 'result_zh')}
-
-**贡献（LLM 解读）**：
-
-{_analysis_value(analysis, 'contribution_zh')}
 
 **BibTeX（权威端点原文）**：
 
@@ -81,11 +132,18 @@ def render_paper_md(paper: PaperFacts, analysis: dict, idx: int) -> str:
 """
 
 
-def render_readme(papers: list[PaperFacts], analyses: dict[str, dict], date_str: str) -> str:
-    categories: dict[str, list[int]] = {}
+def render_readme(
+    papers: list[PaperFacts],
+    analyses: dict[str, dict],
+    date_str: str,
+    *,
+    bucket_map: dict[str, str] | None = None,
+    main_track_label: str = "",
+) -> str:
+    grouped: dict[str, list[int]] = {bucket: [] for bucket in BUCKETS}
     for index, paper in enumerate(papers, 1):
-        category = _analysis_value(analyses.get(paper.paper_id, {}), "category", "Other")
-        categories.setdefault(category, []).append(index)
+        bucket = (bucket_map or {}).get(paper.paper_id, "others")
+        grouped["main_track" if bucket == "main_track" else "others"].append(index)
     parts = [
         f"# LLM Security Daily — {date_str}",
         "",
@@ -96,11 +154,20 @@ def render_readme(papers: list[PaperFacts], analyses: dict[str, dict], date_str:
         "## 分类索引",
         "",
     ]
-    for category, indexes in categories.items():
-        parts.append(f"- **{category}**：#{', #'.join(map(str, indexes))}")
+    for bucket in BUCKETS:
+        label = _bucket_label(bucket, main_track_label)
+        parts.append(f"- **{label}**：#{', #'.join(map(str, grouped[bucket]))}")
     parts.extend(["", "---", ""])
     for index, paper in enumerate(papers, 1):
-        parts.append(render_paper_md(paper, analyses.get(paper.paper_id, {}), index))
+        parts.append(
+            render_paper_md(
+                paper,
+                analyses.get(paper.paper_id, {}),
+                index,
+                bucket=(bucket_map or {}).get(paper.paper_id, "others"),
+                main_track_label=main_track_label,
+            )
+        )
     return "\n".join(parts).rstrip() + "\n"
 
 
@@ -211,17 +278,34 @@ def main() -> int:
         print("FATAL: facts and materialize manifest do not agree", file=sys.stderr)
         return 1
     analyses = load_analysis(args.analysis, {paper.paper_id for paper in papers})
+    bucket_map = _manifest_bucket_map(manifest)
+    main_track_label = str(manifest.get("main_track", "")).strip()
 
     papers_dir = output_dir / "papers"
     papers_dir.mkdir(parents=True, exist_ok=True)
-    readme = render_readme(papers, analyses, date_str)
+    readme = render_readme(
+        papers,
+        analyses,
+        date_str,
+        bucket_map=bucket_map,
+        main_track_label=main_track_label,
+    )
     (output_dir / "README.md").write_text(readme, encoding="utf-8")
     bibtex_parts = [f"% LLM Security Daily — {date_str}", ""]
     for index, paper in enumerate(papers, 1):
         bibtex_parts.extend([f"% [{index}] {paper.title}", paper.bibtex or "", ""])
         slug = re.sub(r"[^a-z0-9]+", "-", paper.title.casefold())[:48].strip("-")
         filename = f"{index:02d}_{re.sub(r'[^a-zA-Z0-9_.-]+', '_', paper.source_id)}_{slug}.md"
-        (papers_dir / filename).write_text(render_paper_md(paper, analyses.get(paper.paper_id, {}), index), encoding="utf-8")
+        (papers_dir / filename).write_text(
+            render_paper_md(
+                paper,
+                analyses.get(paper.paper_id, {}),
+                index,
+                bucket=bucket_map.get(paper.paper_id, "others"),
+                main_track_label=main_track_label,
+            ),
+            encoding="utf-8",
+        )
     (output_dir / "bibtex.bib").write_text("\n".join(bibtex_parts).rstrip() + "\n", encoding="utf-8")
     write_json(output_dir / "facts.json", facts_payload)
     write_json(output_dir / "analysis.json", {"papers": list(analyses.values())})

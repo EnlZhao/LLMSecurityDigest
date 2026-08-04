@@ -31,18 +31,23 @@ BibTeX. It invokes SerpAPI only for that ranked shortlist, never for discovery.
 Within each permitted tier, rank by topical relevance, technical novelty,
 methodological clarity, evidence for the claimed result, and reader value. A
 venue/status label is script-owned evidence, not a substitute for reading the
-verified abstract and bounded full text. In Chinese analysis, distinguish what
-the frozen paper directly supports from your interpretation and state
-uncertainty when the retrieved sections do not support a conclusion.
+verified abstract and bounded full text. Translate the complete authoritative
+abstract into academic Chinese in `summary_zh`; do not summarize it in English,
+truncate it, or insert an ellipsis. In Chinese analysis, distinguish what the
+frozen paper directly supports from your interpretation and state uncertainty
+when the retrieved sections do not support a conclusion.
 
 Derive `category` as a research-direction label from the paper's title,
 authoritative abstract, and the bounded full-text sections you read. Do not use
 platform or source labels such as `arXiv`, `OpenReview`, a venue name, or a
-subject code such as `cs.CR` as a category. `summary_zh` must summarize the
-research question, approach, and supported evidence/results; it must not become
-a description of where the paper was hosted or discovered. The rendered output
-groups papers by research direction first, then marks each paper's formal venue
-or arXiv preprint and publication status.
+subject code such as `cs.CR` as a category. Derive `problem_zh` (the research
+question, research problem, and gap), `contribution_zh`, `method_zh`, and
+`result_zh` from the complete Chinese
+academic synthesis and the sections you read, not by copying fragments of the
+English abstract. Write each field completely; there is no character budget
+and no display-layer truncation. The rendered output groups papers by research
+direction first, then marks each paper's formal venue or arXiv preprint and
+publication status.
 
 Hermes may propose strategy-only evolution overlays with `reflect`; it may not
 write facts, HTTP endpoints, credentials, or single-paper title/DOI/date values.
