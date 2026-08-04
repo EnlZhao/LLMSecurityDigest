@@ -1535,6 +1535,10 @@ class CrossrefSource:
             venue_papers = 0
             venue_scanned = 0
             venue_filtered = 0
+            # Crossref search results overlap heavily across Boolean
+            # queries. Keep one identity set per venue so a duplicate DOI
+            # cannot consume the venue budget before a later unique hit.
+            seen_paper_ids: set[str] = set()
             requests_attempted = 0
             requests_succeeded = 0
             for query in plan.queries:
@@ -1565,7 +1569,16 @@ class CrossrefSource:
                     requests_succeeded += 1
                     parsed, parsed_incomplete, stats = self._parse_items_with_stats(response, expected_venue=spec)
                     remaining = plan.max_results_per_venue - venue_papers
-                    accepted = parsed[:remaining]
+                    accepted: list[PaperFacts] = []
+                    for paper in parsed:
+                        if paper.paper_id in seen_paper_ids:
+                            venue_filtered += 1
+                            continue
+                        seen_paper_ids.add(paper.paper_id)
+                        if len(accepted) >= remaining:
+                            venue_filtered += 1
+                            continue
+                        accepted.append(paper)
                     papers.extend(accepted)
                     incomplete.extend(parsed_incomplete)
                     venue_papers += len(accepted)
@@ -1573,7 +1586,7 @@ class CrossrefSource:
                     venue_scanned += stats["scanned"]
                     # The API may ignore `rows`; locally clip accepted
                     # records so a source cannot exceed its venue budget.
-                    venue_filtered += stats["filtered"] + len(parsed) - len(accepted)
+                    venue_filtered += stats["filtered"]
                 except Exception as exc:
                     venue_errors.append({
                         "query": query,

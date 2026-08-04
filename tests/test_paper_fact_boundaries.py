@@ -861,6 +861,54 @@ def test_crossref_discovery_clips_api_over_return_to_venue_budget() -> None:
     assert result.reports[0]["truncated"] is True
 
 
+def test_crossref_deduplicates_cross_query_hits_before_budget() -> None:
+    first = _crossref_item()
+    duplicate = dict(first)
+    second = _crossref_item()
+    second["DOI"] = "10.1109/SP.2026.7654321"
+    second["title"] = ["Crossref second title"]
+
+    responses = [
+        HttpResponse(
+            url="https://api.crossref.org/works",
+            final_url="https://api.crossref.org/works",
+            status=200,
+            headers={},
+            body=json.dumps({"message": {"items": [first]}}).encode(),
+        ),
+        HttpResponse(
+            url="https://api.crossref.org/works",
+            final_url="https://api.crossref.org/works",
+            status=200,
+            headers={},
+            body=json.dumps({"message": {"items": [duplicate, second]}}).encode(),
+        ),
+    ]
+
+    class Client:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get(self, *_args, **_kwargs) -> HttpResponse:
+            response = responses[self.calls]
+            self.calls += 1
+            return response
+
+    result = CrossrefSource(Client()).discover_result(SearchPlan(
+        queries=["security", "prompt injection"],
+        sources=["crossref"],
+        crossref_venues=["ieee-sp"],
+        max_results_per_query=50,
+        max_results_per_venue=2,
+    ))
+
+    assert [paper.source_id for paper in result.papers] == [
+        "10.1109/sp.2026.1234567",
+        "10.1109/sp.2026.7654321",
+    ]
+    assert result.reports[0]["records_filtered"] == 1
+
+
 @pytest.mark.parametrize("missing", ["abstract", "pdf_url"])
 def test_ieee_missing_abstract_or_pdf_stays_incomplete(missing) -> None:
     article = _ieee_article()
