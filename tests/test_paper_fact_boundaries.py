@@ -884,6 +884,21 @@ def test_ieee_refresh_cannot_cross_registered_venue(monkeypatch) -> None:
         pipeline.refresh_authoritative(candidate, client=_ResponseClient(_ieee_response(item)))
 
 
+def test_doi_refresh_rejects_unscoped_legacy_candidate() -> None:
+    doi = "10.1109/TDSC.2026.1234567"
+    candidate = _paper(
+        paper_id=f"doi:{doi.lower()}",
+        source="crossref",
+        source_id=doi,
+        title="Unscoped DOI candidate",
+        authors=["Alice Example"],
+        doi=doi,
+    )
+
+    with pytest.raises(ValueError, match="candidate venue is not registered"):
+        pipeline.refresh_authoritative(candidate, client=_ResponseClient(_crossref_response(_crossref_item())))
+
+
 def test_crossref_discovery_clips_api_over_return_to_venue_budget() -> None:
     first = _crossref_item()
     second = _crossref_item()
