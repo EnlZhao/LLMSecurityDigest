@@ -357,6 +357,48 @@ def test_arxiv_discovery_respects_per_venue_budget() -> None:
     assert result.reports[0]["budget_exhausted"] is True
 
 
+def test_arxiv_deduplicates_cross_query_hits_before_budget() -> None:
+    def response(arxiv_ids: list[str]) -> HttpResponse:
+        entries = "".join(
+            f"<entry><id>https://arxiv.org/abs/{arxiv_id}</id>"
+            f"<title>Paper {arxiv_id}</title><summary>Abstract {arxiv_id}</summary>"
+            "<author><name>Alice Example</name></author>"
+            "<published>2026-01-02T00:00:00Z</published>"
+            "<updated>2026-01-03T00:00:00Z</updated></entry>"
+            for arxiv_id in arxiv_ids
+        )
+        return HttpResponse(
+            url="https://export.arxiv.org/api/query",
+            final_url="https://export.arxiv.org/api/query",
+            status=200,
+            headers={},
+            body=(f'<feed xmlns="http://www.w3.org/2005/Atom">{entries}</feed>').encode(),
+        )
+
+    class Client:
+        def __init__(self) -> None:
+            self.responses = [response(["2601.12345"]), response(["2601.12345", "2601.12346"])]
+            self.calls: list[str] = []
+
+        def get(self, url: str, **_kwargs) -> HttpResponse:
+            self.calls.append(url)
+            return self.responses.pop(0)
+
+    client = Client()
+    result = ArxivSource(client).discover_result(SearchPlan(
+        queries=["ti:first", "ti:second"],
+        sources=["arxiv"],
+        max_results_per_query=50,
+        max_results_per_venue=2,
+        openreview_venues=[],
+        crossref_venues=[],
+    ))
+
+    assert [paper.source_id for paper in result.papers] == ["2601.12345", "2601.12346"]
+    assert len(client.calls) == 2
+    assert result.reports[0]["records_filtered"] == 1
+
+
 def test_arxiv_needs_exact_title_first_author_and_author_similarity_without_doi() -> None:
     arxiv = _paper(
         paper_id="arxiv:2601.12345", source="arxiv", source_id="2601.12345",

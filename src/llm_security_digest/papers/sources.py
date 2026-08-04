@@ -708,6 +708,10 @@ class ArxivSource:
         requests_succeeded = 0
         records_scanned = 0
         records_filtered = 0
+        # A paper can match several Boolean queries.  Deduplicate before
+        # spending the per-source quota so a repeated hit cannot hide a
+        # unique record returned by a later query.
+        seen_paper_ids: set[str] = set()
         venue_limit = plan.max_results_per_venue
         for query in plan.queries:
             if len(papers) >= venue_limit:
@@ -733,11 +737,20 @@ class ArxivSource:
                 # The API should honor ``max_results``, but enforce the venue
                 # budget locally so a source-side over-return cannot expand
                 # the daily collection beyond its configured limit.
-                accepted = parsed[:remaining]
+                accepted: list[PaperFacts] = []
+                for paper in parsed:
+                    if paper.paper_id in seen_paper_ids:
+                        records_filtered += 1
+                        continue
+                    seen_paper_ids.add(paper.paper_id)
+                    if len(accepted) >= remaining:
+                        records_filtered += 1
+                        continue
+                    accepted.append(paper)
                 papers.extend(accepted)
                 incomplete.extend(parsed_incomplete)
                 records_scanned += stats["scanned"]
-                records_filtered += stats["filtered"] + max(len(parsed) - len(accepted), 0)
+                records_filtered += stats["filtered"]
             except Exception as exc:
                 errors.append({
                     "query": query,
