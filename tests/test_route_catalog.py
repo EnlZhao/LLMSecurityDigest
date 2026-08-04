@@ -219,6 +219,43 @@ def test_official_adapter_falls_back_to_baseline_url_when_hint_fails() -> None:
     assert client.calls == [Hint.url, baseline]
 
 
+def test_official_adapter_ignores_nonverified_or_cross_venue_hints() -> None:
+    class FailedHint:
+        source = "official"
+        adapter = "neurips"
+        route_kind = "index"
+        venue_key = "neurips"
+        verification_state = "failed"
+        url = "https://proceedings.neurips.cc/paper_files/paper/2025/"
+
+    class CrossVenueHint:
+        source = "official"
+        adapter = "neurips"
+        route_kind = "index"
+        venue_key = "cvpr"
+        verification_state = "verified"
+        url = "https://proceedings.neurips.cc/paper_files/paper/2025/"
+
+    class Catalog:
+        def verified_routes(self, *, venue):
+            assert venue.key == "neurips"
+            return [FailedHint(), CrossVenueHint()]
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, url, **kwargs):
+            self.calls.append(url)
+            return HttpResponse(url=url, final_url=url, status=200, headers={}, body=b"index")
+
+    client = Client()
+    adapter = NeurIPSAdapter(client, route_catalog=Catalog())
+    baseline = "https://proceedings.neurips.cc/paper_files/paper/2025"
+    adapter._get(baseline, spec=get_venue_spec("neurips"), route_kind="index")
+    assert client.calls == [baseline]
+
+
 def test_official_adapter_does_not_replace_aaai_archive_with_pagination_hint() -> None:
     class Hint:
         source = "official"

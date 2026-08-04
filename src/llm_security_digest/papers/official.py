@@ -498,6 +498,24 @@ class OfficialAdapter:
         expected_kind = route_kind.casefold()
         expected_source = source.casefold()
         for route in routes:
+            # ``verified_routes`` is the baseline catalog contract, but keep
+            # the adapter boundary defensive when a custom catalog/view is
+            # injected.  A failed row or a row returned for another venue is
+            # never a reusable hint.
+            verification_state = getattr(route, "verification_state", None)
+            if (
+                verification_state is not None
+                and str(verification_state).casefold() != "verified"
+            ):
+                continue
+            verified = getattr(route, "verified", None)
+            if verified is not None and not bool(verified):
+                continue
+            route_venue = getattr(route, "venue_key", None)
+            if route_venue is not None:
+                route_spec = get_venue_spec(route_venue)
+                if route_spec is None or route_spec.key.casefold() != spec.key.casefold():
+                    continue
             if (
                 str(getattr(route, "source", "")).casefold() == expected_source
                 and str(getattr(route, "adapter", "")).casefold() == expected_adapter
