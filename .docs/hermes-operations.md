@@ -527,6 +527,14 @@ Official adapters still rebuild and re-fetch paper detail routes during
 materialize; the catalog is an index hint, not a facts authority or a
 materialization shortcut.
 
+The scheduled and manually dispatched GitHub collector restores this SQLite
+file from the `paper-route-catalog-*` Actions cache before discovery and saves
+the updated file after every run, including failed runs. The cache contains
+route metadata and response hashes only; it does not contain paper content,
+credentials, or `facts.json`. Cache expiry can reduce discovery hints, but it
+cannot reduce correctness because the baseline URLs and parsers remain
+independent and always re-fetch a hint before using it.
+
 ## Hermes reflection and evolution
 
 Hermes may change query text, keyword combinations, date windows, registered

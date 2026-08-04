@@ -401,6 +401,31 @@ def _csdl_plan(*, limit: int = 2) -> SearchPlan:
     )
 
 
+def test_csdl_graphql_reuses_verified_endpoint_but_rebuilds_query() -> None:
+    class Hint:
+        source = "official"
+        adapter = "ieee_csdl"
+        route_kind = "index"
+        url = "https://www.computer.org/csdl/api/v1/graphql?query=stale&variables=%7B%7D"
+
+    class Catalog:
+        def verified_routes(self, *, venue):
+            assert venue.key == "ieee-sp"
+            return [Hint()]
+
+    client = _CSDLClient()
+    adapter = IEEEComputerCSDLAdapter(client, route_catalog=Catalog())
+    adapter._graphql(
+        "query ($groupId: String) { proceedings(groupId: $groupId) { id } }",
+        {"groupId": "1000646"},
+    )
+
+    assert len(client.calls) == 1
+    requested = urlparse(client.calls[0])
+    assert requested.path == "/csdl/api/v1/graphql"
+    assert parse_qs(requested.query)["variables"] == ['{"groupId":"1000646"}']
+
+
 def test_csdl_source_id_route_is_strict_and_registered() -> None:
     source_id = "2025:sp:223600a037:21B7QqhuoOA"
     assert IEEEComputerCSDLAdapter.article_url(source_id) == (

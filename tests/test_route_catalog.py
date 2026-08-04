@@ -7,7 +7,7 @@ from pathlib import Path
 
 from llm_security_digest.papers.http import HttpResponse
 from llm_security_digest.papers.models import get_venue_spec
-from llm_security_digest.papers.official import NeurIPSAdapter
+from llm_security_digest.papers.official import AAAIOJSAdapter, NeurIPSAdapter
 from llm_security_digest.route_catalog import RouteCatalog
 
 
@@ -217,6 +217,58 @@ def test_official_adapter_falls_back_to_baseline_url_when_hint_fails() -> None:
     baseline = "https://proceedings.neurips.cc/paper_files/paper/2025"
     adapter._get(baseline, spec=get_venue_spec("neurips"), route_kind="index")
     assert client.calls == [Hint.url, baseline]
+
+
+def test_official_adapter_does_not_replace_aaai_archive_with_pagination_hint() -> None:
+    class Hint:
+        source = "official"
+        adapter = "aaai_ojs"
+        route_kind = "index"
+        url = "https://ojs.aaai.org/index.php/AAAI/issue/archive?page=2"
+
+    class Catalog:
+        def verified_routes(self, *, venue):
+            return [Hint()]
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, url, **kwargs):
+            self.calls.append(url)
+            return HttpResponse(url=url, final_url=url, status=200, headers={}, body=b"archive")
+
+    client = Client()
+    adapter = AAAIOJSAdapter(client, route_catalog=Catalog())
+    baseline = AAAIOJSAdapter.ARCHIVE_URL
+    adapter._get(baseline, spec=get_venue_spec("aaai"), route_kind="index")
+    assert client.calls == [baseline]
+
+
+def test_official_adapter_rejects_aaai_archive_subpath_hint() -> None:
+    class Hint:
+        source = "official"
+        adapter = "aaai_ojs"
+        route_kind = "index"
+        url = "https://ojs.aaai.org/index.php/AAAI/issue/archive/garbage"
+
+    class Catalog:
+        def verified_routes(self, *, venue):
+            return [Hint()]
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, url, **kwargs):
+            self.calls.append(url)
+            return HttpResponse(url=url, final_url=url, status=200, headers={}, body=b"archive")
+
+    client = Client()
+    adapter = AAAIOJSAdapter(client, route_catalog=Catalog())
+    baseline = AAAIOJSAdapter.ARCHIVE_URL
+    adapter._get(baseline, spec=get_venue_spec("aaai"), route_kind="index")
+    assert client.calls == [baseline]
 
 
 def test_headless_raw_persists_captured_route_without_second_fetch(tmp_path) -> None:

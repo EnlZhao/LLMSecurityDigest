@@ -19,6 +19,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 jobs:
   collect:
@@ -34,6 +35,14 @@ jobs:
           mkdir -p "$RUNNER_TEMP/llmsd/diagnostics"
           printf 'workflow_run_id=%s\n' "$GITHUB_RUN_ID" \
             > "$RUNNER_TEMP/llmsd/diagnostics/run.txt"
+
+      - name: Restore verified route catalog
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/llmsd/route_catalog.sqlite3
+          key: paper-route-catalog-${{ github.repository }}-${{ github.run_id }}
+          restore-keys: |
+            paper-route-catalog-${{ github.repository }}-
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -180,6 +189,28 @@ jobs:
             fi
           fi
           exit "$status"
+
+      - name: Ensure route catalog database exists
+        if: always()
+        run: |
+          set -euo pipefail
+          if [ ! -f "$RUNNER_TEMP/llmsd/route_catalog.sqlite3" ]; then
+            python - <<'PY'
+          import os
+          from pathlib import Path
+
+          from llm_security_digest.route_catalog import RouteCatalog
+
+          RouteCatalog(Path(os.environ["RUNNER_TEMP"]) / "llmsd")
+          PY
+          fi
+
+      - name: Persist verified route catalog
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/llmsd/route_catalog.sqlite3
+          key: paper-route-catalog-${{ github.repository }}-${{ github.run_id }}
 
       - name: Record collection diagnostics
         if: always()

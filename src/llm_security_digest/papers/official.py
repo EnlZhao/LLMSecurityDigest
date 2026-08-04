@@ -16,7 +16,7 @@ from typing import Any, Callable, Iterable
 from urllib.parse import parse_qsl, quote_plus, urlencode, urljoin, urlparse
 
 from .http import HttpClient, HttpResponse, _secret_query_key
-from .models import DiscoveryResult, PaperFacts, SearchPlan, VenueSpec, normalize_doi, normalize_title, utc_now
+from .models import DiscoveryResult, PaperFacts, SearchPlan, VenueSpec, get_venue_spec, normalize_doi, normalize_title, utc_now
 
 
 _OFFICIAL_PDF_HOSTS = {
@@ -506,7 +506,11 @@ class OfficialAdapter:
                 and self._hint_url_allowed(route.url)
                 and self._hint_path_allowed(route.url, spec=spec, route_kind=route_kind)
                 and self._hint_year_allowed(route.url, fallback_url=fallback_url)
-                and self._hint_scope_allowed(route.url, fallback_url=fallback_url)
+                and self._hint_scope_allowed(
+                    route.url,
+                    fallback_url=fallback_url,
+                    allow_query_mismatch=self.adapter.casefold() == "ieee_csdl",
+                )
             ):
                 return route.url
         return None
@@ -536,7 +540,9 @@ class OfficialAdapter:
             code = re.escape(spec.key.upper())
             return bool(re.fullmatch(rf"/{code}(?:19|20)\d{{2}}", path)) and parsed.query.casefold() == "day=all"
         if adapter == "aaai_ojs":
-            return path.startswith("/index.php/AAAI/issue/archive")
+            return path.rstrip("/") == "/index.php/AAAI/issue/archive"
+        if adapter == "ieee_csdl":
+            return path == "/csdl/api/v1/graphql"
         if adapter == "ijcai":
             return bool(re.fullmatch(r"/proceedings/(?:19|20)\d{2}/?", path)) and not parsed.query
         if adapter == "usenix":
@@ -582,13 +588,21 @@ class OfficialAdapter:
         return not expected or not candidate or bool(expected & candidate)
 
     @staticmethod
-    def _hint_scope_allowed(url: str, *, fallback_url: str | None) -> bool:
+    def _hint_scope_allowed(
+        url: str,
+        *,
+        fallback_url: str | None,
+        allow_query_mismatch: bool = False,
+    ) -> bool:
         """Keep volume/pagination-specific index hints on their own scope."""
         if not fallback_url:
             return True
         fallback = urlparse(fallback_url)
         candidate = urlparse(url)
-        if fallback.query and fallback.query != candidate.query:
+        # A query-bearing hint can represent a pagination page (for example
+        # the AAAI archive). Never substitute it for a queryless baseline,
+        # and keep query-bearing baselines on their exact scope.
+        if not allow_query_mismatch and fallback.query != candidate.query:
             return False
         fallback_volume = re.search(r"/volumes/([^/]+)/?", fallback.path)
         candidate_volume = re.search(r"/volumes/([^/]+)/?", candidate.path)
@@ -2055,12 +2069,45 @@ class IEEEComputerCSDLAdapter(OfficialAdapter):
             "variables": json.dumps(variables, separators=(",", ":"), sort_keys=True),
         })
         url = f"{self.GRAPHQL_URL}?{encoded}"
-        response = self.client.get(
-            url,
-            min_interval=0.2,
-            max_bytes=20 * 1024 * 1024,
-            allowed_hosts=self.GRAPHQL_HOSTS,
+        # A verified CSDL route identifies only the public GraphQL endpoint.
+        # Rebuild the current operation and variables instead of replaying a
+        # stale catalog query (which could point at another proceeding or
+        # pagination offset).
+        target_url = url
+        hinted = self._route_hint(
+            get_venue_spec("ieee-sp"),
+            route_kind="index",
+            source="official",
+            fallback_url=self.GRAPHQL_URL,
         )
+        if hinted:
+            hinted_parts = urlparse(hinted)
+            requested_parts = urlparse(url)
+            target_url = hinted_parts._replace(
+                query=requested_parts.query,
+                fragment="",
+            ).geturl()
+        try:
+            response = self.client.get(
+                target_url,
+                min_interval=0.2,
+                max_bytes=20 * 1024 * 1024,
+                allowed_hosts=self.GRAPHQL_HOSTS,
+            )
+        except Exception as hinted_error:
+            if target_url == url:
+                raise
+            # Route catalog hints are an optimization.  A stale hint must not
+            # prevent the fixed baseline endpoint from being attempted.
+            try:
+                response = self.client.get(
+                    url,
+                    min_interval=0.2,
+                    max_bytes=20 * 1024 * 1024,
+                    allowed_hosts=self.GRAPHQL_HOSTS,
+                )
+            except Exception as fallback_error:
+                raise fallback_error from hinted_error
         payload = response.json()
         if not isinstance(payload, dict):
             raise ValueError("IEEE CSDL GraphQL response is not an object")

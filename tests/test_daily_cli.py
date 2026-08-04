@@ -371,6 +371,9 @@ def test_scholar_workflow_uses_bounded_candidate_intake_and_explicit_artifact() 
     assert "duplicate paper_id values" in scholar_workflow
     assert "path: ${{ runner.temp }}/llmsd/candidates.json" in collect_workflow
     assert "path: ${{ runner.temp }}/llmsd/\n" not in collect_workflow
+    assert "actions/cache/restore@v4" in collect_workflow
+    assert "actions/cache/save@v4" in collect_workflow
+    assert "paper-route-catalog-${{ github.repository }}-${{ github.run_id }}" in collect_workflow
     smoke_workflow = (root / ".github" / "workflows" / "smoke-venue-adapters.yml").read_text(encoding="utf-8")
     assert "OpenReview v2 connectivity" in smoke_workflow
     assert 'OpenReviewClientFactory.from_env().get("v2")' in smoke_workflow
