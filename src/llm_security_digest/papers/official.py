@@ -522,11 +522,17 @@ class OfficialAdapter:
                 and str(getattr(route, "route_kind", "")).casefold() == expected_kind
                 and isinstance(getattr(route, "url", None), str)
                 and self._hint_url_allowed(route.url)
-                and self._hint_path_allowed(route.url, spec=spec, route_kind=route_kind)
+                and self._hint_path_allowed(
+                    route.url,
+                    spec=spec,
+                    route_kind=route_kind,
+                    fallback_url=fallback_url,
+                )
                 and self._hint_year_allowed(route.url, fallback_url=fallback_url)
                 and self._hint_scope_allowed(
                     route.url,
                     fallback_url=fallback_url,
+                    adapter=self.adapter,
                     allow_query_mismatch=self.adapter.casefold() == "ieee_csdl",
                 )
             ):
@@ -539,6 +545,7 @@ class OfficialAdapter:
         *,
         spec: VenueSpec,
         route_kind: str,
+        fallback_url: str | None = None,
     ) -> bool:
         """Apply the adapter's baseline path grammar to an index hint."""
         if route_kind.casefold() != "index":
@@ -549,7 +556,25 @@ class OfficialAdapter:
         if adapter == "acl_anthology":
             return bool(re.fullmatch(r"/volumes/(?:19|20)\d{2}\.[A-Za-z0-9][A-Za-z0-9_-]*/?", path))
         if adapter == "pmlr":
-            return path == "/" and not parsed.query
+            if parsed.query:
+                return False
+            if path == "/":
+                # The root catalog remains the baseline discovery fallback;
+                # an annual-volume hint must never replace it.
+                if fallback_url:
+                    return (urlparse(fallback_url).path or "/") == "/"
+                return True
+            volume_match = re.fullmatch(r"/v([1-9]\d*)/?", path, flags=re.IGNORECASE)
+            if not volume_match:
+                return False
+            if not fallback_url:
+                return True
+            fallback_match = re.fullmatch(
+                r"/v([1-9]\d*)/?",
+                urlparse(fallback_url).path or "",
+                flags=re.IGNORECASE,
+            )
+            return bool(fallback_match and int(volume_match.group(1)) == int(fallback_match.group(1)))
         if adapter == "neurips":
             return bool(re.fullmatch(r"/paper_files/paper/(?:19|20)\d{2}/?", path)) and not parsed.query
         if adapter == "ecva":
@@ -610,6 +635,7 @@ class OfficialAdapter:
         url: str,
         *,
         fallback_url: str | None,
+        adapter: str | None = None,
         allow_query_mismatch: bool = False,
     ) -> bool:
         """Keep volume/pagination-specific index hints on their own scope."""
@@ -626,6 +652,17 @@ class OfficialAdapter:
         candidate_volume = re.search(r"/volumes/([^/]+)/?", candidate.path)
         if fallback_volume and candidate_volume:
             return fallback_volume.group(1).casefold() == candidate_volume.group(1).casefold()
+        if str(adapter or "").casefold() == "pmlr":
+            fallback_pmlr_volume = re.fullmatch(r"/v([1-9]\d*)/?", fallback.path, flags=re.IGNORECASE)
+            candidate_pmlr_volume = re.fullmatch(r"/v([1-9]\d*)/?", candidate.path, flags=re.IGNORECASE)
+            # A root fallback and a volume hint are different scopes. When
+            # both routes identify a volume, require the same generic vNNN.
+            if fallback_pmlr_volume or candidate_pmlr_volume:
+                return bool(
+                    fallback_pmlr_volume
+                    and candidate_pmlr_volume
+                    and int(fallback_pmlr_volume.group(1)) == int(candidate_pmlr_volume.group(1))
+                )
         return True
 
     def _get(
@@ -892,7 +929,10 @@ class PMLRAdapter(OfficialAdapter):
             volume_url = f"https://proceedings.mlr.press/{volume['volume']}/"
             urls.append(volume_url)
             try:
-                response = self._get(volume_url)
+                # Volume pages are annual collection indexes. Reuse only a
+                # verified route for this exact vNNN scope; the root index
+                # above remains the deterministic fallback.
+                response = self._get(volume_url, spec=spec, route_kind="index")
                 fetched += 1
                 paper_urls = self.paper_urls(response.text(), volume=volume["volume"])
             except Exception as exc:

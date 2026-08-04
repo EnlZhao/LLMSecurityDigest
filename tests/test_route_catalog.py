@@ -8,7 +8,7 @@ from pathlib import Path
 
 from llm_security_digest.papers.http import HttpResponse
 from llm_security_digest.papers.models import get_venue_spec
-from llm_security_digest.papers.official import AAAIOJSAdapter, NeurIPSAdapter
+from llm_security_digest.papers.official import AAAIOJSAdapter, NeurIPSAdapter, PMLRAdapter
 from llm_security_digest.route_catalog import RouteCatalog
 
 
@@ -324,6 +324,71 @@ def test_official_adapter_ignores_nonverified_or_cross_venue_hints() -> None:
     assert client.calls == [baseline]
 
 
+def test_pmlr_volume_route_is_reused_for_matching_volume_scope(tmp_path) -> None:
+    volume_url = "https://proceedings.mlr.press/v267/"
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, url, **_kwargs):
+            self.calls.append(url)
+            return HttpResponse(url=url, final_url=url, status=200, headers={}, body=b"volume")
+
+    client = Client()
+    catalog = RouteCatalog(tmp_path)
+    record = catalog.verify(
+        venue="icml",
+        url=volume_url,
+        source="official",
+        route_kind="index",
+        client=client,
+    )
+    assert record.verification_state == "verified"
+    client.calls.clear()
+
+    PMLRAdapter(client, route_catalog=catalog)._get(
+        volume_url.rstrip("/"),
+        spec=get_venue_spec("icml"),
+        route_kind="index",
+    )
+
+    assert client.calls == [volume_url]
+
+
+def test_pmlr_root_and_other_volume_hints_fall_back_to_requested_volume(tmp_path) -> None:
+    fallback_url = "https://proceedings.mlr.press/v267/"
+
+    class Client:
+        def __init__(self):
+            self.calls = []
+
+        def get(self, url, **_kwargs):
+            self.calls.append(url)
+            return HttpResponse(url=url, final_url=url, status=200, headers={}, body=b"volume")
+
+    client = Client()
+    catalog = RouteCatalog(tmp_path)
+    for hint_url in ("https://proceedings.mlr.press/", "https://proceedings.mlr.press/v268/"):
+        record = catalog.verify(
+            venue="icml",
+            url=hint_url,
+            source="official",
+            route_kind="index",
+            client=client,
+        )
+        assert record.verification_state == "verified"
+    client.calls.clear()
+
+    PMLRAdapter(client, route_catalog=catalog)._get(
+        fallback_url,
+        spec=get_venue_spec("icml"),
+        route_kind="index",
+    )
+
+    assert client.calls == [fallback_url]
+
+
 def test_official_adapter_does_not_replace_aaai_archive_with_pagination_hint() -> None:
     class Hint:
         source = "official"
@@ -430,3 +495,67 @@ def test_headless_raw_persists_captured_route_without_second_fetch(tmp_path) -> 
     assert result["status"] == "ok"
     assert result["responses"][0]["route_catalog"]["verification_state"] == "verified"
     assert len(catalog.verified_routes(venue="neurips")) == 1
+
+
+def test_headless_provenance_url_cannot_change_captured_route_identity(tmp_path) -> None:
+    from llm_security_digest.papers.headless import HeadlessDiscovery
+
+    request_url = "https://proceedings.neurips.cc/paper_files/paper/2025"
+    provenance_url = "https://proceedings.neurips.cc/paper_files/paper/2025/other"
+
+    class BrowserResponse:
+        status = 200
+        url = request_url
+        headers = {"content-type": "text/html"}
+
+        def body(self):
+            return b"<html>requested route</html>"
+
+    class Page:
+        def goto(self, target, **_kwargs):
+            assert target == request_url
+            return BrowserResponse()
+
+    class Context:
+        def route(self, *_args):
+            return None
+
+        def new_page(self):
+            return Page()
+
+        def close(self):
+            return None
+
+    class Browser:
+        def new_context(self, **_kwargs):
+            return Context()
+
+        def close(self):
+            return None
+
+    class Playwright:
+        class chromium:
+            @staticmethod
+            def launch(**_kwargs):
+                return Browser()
+
+    class Manager:
+        def start(self):
+            return Playwright()
+
+        def stop(self):
+            return None
+
+    catalog = RouteCatalog(tmp_path)
+    response = HeadlessDiscovery(playwright_factory=lambda: Manager()).fetch_raw(
+        request_url,
+        provenance_url=provenance_url,
+        route_catalog=catalog,
+        route_context={"venue": "neurips", "source": "official", "adapter": "neurips", "route_kind": "index"},
+    )
+
+    assert response.url == request_url
+    assert response.provenance["source_url"] == provenance_url
+    assert response.provenance["requested_url"] == request_url
+    assert catalog.reusable_route(venue="neurips", url=request_url, route_kind="index") is not None
+    assert catalog.reusable_route(venue="neurips", url=provenance_url, route_kind="index") is None

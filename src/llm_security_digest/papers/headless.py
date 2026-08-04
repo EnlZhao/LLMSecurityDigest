@@ -491,11 +491,15 @@ class HeadlessDiscovery:
                 raise HeadlessDiscoveryError(f"browser response exceeds {max_bytes} bytes")
             body = _response_body(response, max_bytes=max_bytes)
             fetched_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-            safe_url = safe_provenance_url
             digest = hashlib.sha256(body).hexdigest()
             provenance = {
-                "source_url": safe_url,
-                "requested_url": safe_url,
+                # ``provenance_url`` is diagnostic metadata only.  The
+                # response identity must remain the URL that Playwright was
+                # actually asked to fetch; otherwise a caller could attach
+                # bytes from A to a same-host catalog route B.
+                "source_url": safe_provenance_url,
+                "requested_url": request_url,
+                "provenance_url": safe_provenance_url,
                 "final_url": final_url,
                 "redirect_chain": list(redirects),
                 "http_status": status,
@@ -506,7 +510,7 @@ class HeadlessDiscovery:
                 "content_type": response_headers.get("content-type"),
             }
             captured = HttpResponse(
-                url=safe_url,
+                url=request_url,
                 status=status,
                 headers=response_headers,
                 body=body,
@@ -523,7 +527,7 @@ class HeadlessDiscovery:
             if route_record is not None:
                 provenance["route_catalog"] = route_record
             if status >= 400:
-                raise HttpRequestError(status, safe_url)
+                raise HttpRequestError(status, request_url)
             return captured
         finally:
             if context is not None:

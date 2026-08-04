@@ -30,8 +30,10 @@ verified record on a full track is rejected with a visible
 `track_quota_exceeded` reason. A source failure, quota rejection, or core
 candidate that does not match at least one plan-owned `core_keywords` term in
 its script-owned title or authoritative abstract is rejected visibly. Hermes
-cannot lower the target in a plan or CLI argument, or use a `core` label to
-override this boundary. The result may be short only when authoritative
+cannot omit `core_keywords` and use a `core` label as an implicit fallback:
+that case is rejected with `core_keywords_missing`. Hermes also cannot lower
+the target in a plan or CLI argument, or use a `core` label to override this
+boundary. The result may be short only when authoritative
 verification rejects candidates; no shortfall is filled by an LLM guess or an
 automatic substitute.
 
@@ -517,10 +519,23 @@ After a browser/Bing search identifies an annual proceedings or other official
 index URL and the baseline request succeeds, Hermes must persist that route
 with `--route-kind index` (or use the equivalent `--venue`, `--source`,
 `--adapter`, and `--route-kind` context on `headless_discover.py`). The next
-collection reads only `verified` index rows as hints and scopes them to the
-registered adapter and requested year. The adapter then performs a fresh
+collection reads only `verified` index rows as hints for the registered
+`OfficialAdapter` and scopes them to the adapter's URL grammar, requested year,
+and (where applicable) collection scope. For PMLR/ICML, the root index remains
+the fallback and a verified `/vNNN/` volume route is reused only for that same
+volume; a different volume is ignored. The adapter then performs a fresh
 bounded fetch and deterministic parse, so a catalog row never supplies title,
 authors, abstract, venue, DOI, BibTeX, or `facts.json`.
+
+This persistence does not replace OpenReview's API path. OpenReview records are
+collected through the official v2/v1-compatible client using the exact
+registered cycle ID; an `openreview` browser URL may be retained as evidence,
+but it is not consumed as an API route hint. The route catalog is therefore a
+durable discovery hand-off, not a universal URL cache.
+
+The catalog identity is always the URL actually fetched by the HTTP broker or
+browser. A caller-supplied `provenance_url` is diagnostic metadata only and
+cannot relabel response bytes as another route.
 
 Failed and rejected attempts remain visible for diagnosis, but only rows with
 `verification_state: "verified"` are exposed by the reusable route helper.

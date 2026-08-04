@@ -2071,6 +2071,7 @@ class IeeeXploreSource:
         reports: list[dict[str, Any]] = []
         for spec in specs:
             venue_papers: list[PaperFacts] = []
+            seen_paper_ids: set[str] = set()
             venue_incomplete: list[dict[str, Any]] = []
             errors: list[dict[str, Any]] = []
             requests_attempted = requests_succeeded = 0
@@ -2106,7 +2107,14 @@ class IeeeXploreSource:
                         requests_succeeded += 1
                         parsed, parsed_incomplete, stats = self.parse_articles(response, spec=spec)
                         remaining = plan.max_results_per_venue - len(venue_papers)
-                        accepted = parsed[:remaining]
+                        unique: list[PaperFacts] = []
+                        for paper in parsed:
+                            if paper.paper_id in seen_paper_ids:
+                                filtered += 1
+                                continue
+                            seen_paper_ids.add(paper.paper_id)
+                            unique.append(paper)
+                        accepted = unique[:remaining]
                         venue_papers.extend(accepted)
                         venue_incomplete.extend(parsed_incomplete)
                         page_scanned = stats["scanned"]
@@ -2114,7 +2122,7 @@ class IeeeXploreSource:
                         scanned += page_scanned
                         # The API may return more articles than requested;
                         # enforce the venue budget on accepted records locally.
-                        filtered += stats["filtered"] + len(parsed) - len(accepted)
+                        filtered += stats["filtered"] + len(unique) - len(accepted)
                         if page_scanned < limit:
                             break
                         start_record += page_scanned

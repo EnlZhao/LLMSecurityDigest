@@ -62,6 +62,15 @@ def test_keyword_matching_normalizes_unicode_without_changing_fact_fields() -> N
     assert not pipeline._matches_keywords(paper, ["different topic"])
 
 
+@pytest.mark.parametrize("field", ["filter_keywords", "core_keywords"])
+def test_search_plan_rejects_non_string_keyword_entries(field: str) -> None:
+    plan = SearchPlan(queries=["security"])
+    setattr(plan, field, ["security", 1])
+
+    with pytest.raises(ValueError, match="keywords exceeds safety limits"):
+        plan.validate()
+
+
 def test_collect_uses_a_bounded_discovery_buffer_before_keyword_filtering(monkeypatch) -> None:
     papers = [
         _paper(paper_id="arxiv:noise-1", source="arxiv", source_id="noise-1", title="Noise one", authors=["Alice Example"]),
@@ -1026,6 +1035,58 @@ def test_ieee_discovery_clips_api_over_return_to_venue_budget() -> None:
     assert result.reports[0]["truncated"] is True
 
 
+def test_ieee_discovery_deduplicates_cross_query_hits_before_budget() -> None:
+    first = _ieee_article()
+    duplicate = dict(first)
+    second = _ieee_article()
+    second.update({
+        "doi": "10.1109/SP.2026.7654321",
+        "title": "IEEE second title",
+        "article_number": "7654321",
+        "html_url": "https://ieeexplore.ieee.org/document/7654321",
+        "pdf_url": "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=7654321",
+    })
+    responses = [
+        HttpResponse(
+            url="https://ieeexploreapi.ieee.org/api/v1/search/articles",
+            final_url="https://ieeexploreapi.ieee.org/api/v1/search/articles",
+            status=200,
+            headers={},
+            body=json.dumps({"articles": [first]}).encode(),
+        ),
+        HttpResponse(
+            url="https://ieeexploreapi.ieee.org/api/v1/search/articles",
+            final_url="https://ieeexploreapi.ieee.org/api/v1/search/articles",
+            status=200,
+            headers={},
+            body=json.dumps({"articles": [duplicate, second]}).encode(),
+        ),
+    ]
+
+    class Client:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get(self, *_args, **_kwargs) -> HttpResponse:
+            response = responses[self.calls]
+            self.calls += 1
+            return response
+
+    result = IeeeXploreSource(Client(), api_key="test-key").discover_result(SearchPlan(
+        queries=["security", "prompt injection"],
+        sources=["ieee_xplore"],
+        venue_groups=["ieee-sp"],
+        max_results_per_query=50,
+        max_results_per_venue=2,
+    ))
+
+    assert [paper.source_id for paper in result.papers] == [
+        "10.1109/sp.2026.1234567",
+        "10.1109/sp.2026.7654321",
+    ]
+    assert result.reports[0]["records_filtered"] == 1
+
+
 def test_missing_bibtex_is_rejected_before_materialization(monkeypatch, tmp_path) -> None:
     doi = "10.1234/no-bibtex"
     paper = _paper(
@@ -1037,7 +1098,10 @@ def test_missing_bibtex_is_rejected_before_materialization(monkeypatch, tmp_path
     monkeypatch.setattr(pipeline, "fetch_fulltext", lambda *_args, **_kwargs: {"sha256": "a" * 64, "path": "content.txt"})
 
     facts, manifest = pipeline.materialize(
-        candidates_payload={"candidates": [paper.to_dict()]},
+        candidates_payload={
+            "candidates": [paper.to_dict()],
+            "plan": {"core_keywords": ["No BibTeX"]},
+        },
         selections=[SelectionEntry(paper.paper_id, 1.0, "Security", "ranked", "core")],
         data_dir=tmp_path,
         target=1,
@@ -1249,7 +1313,10 @@ def test_materialization_enforces_the_five_paper_track_limit(monkeypatch, tmp_pa
     monkeypatch.setattr(pipeline, "fetch_fulltext", lambda *_args, **_kwargs: {"sha256": "a" * 64, "path": "content.txt"})
 
     facts, manifest = pipeline.materialize(
-        candidates_payload={"candidates": [paper.to_dict() for paper in papers]},
+        candidates_payload={
+            "candidates": [paper.to_dict() for paper in papers],
+            "plan": {"core_keywords": ["formal"]},
+        },
         selections=selections,
         data_dir=tmp_path,
         scholar_limit=0,
@@ -1292,6 +1359,32 @@ def test_core_selection_requires_declared_core_keyword(monkeypatch, tmp_path) ->
 
     assert facts["total"] == 0
     assert manifest["rejected"] == [{"paper_id": paper.paper_id, "reason": "core_keyword_mismatch"}]
+
+
+def test_core_selection_rejects_missing_core_keywords(monkeypatch, tmp_path) -> None:
+    doi = "10.1234/no-core-plan"
+    paper = _paper(
+        paper_id=f"doi:{doi}", source="crossref", source_id=doi,
+        title="General security paper", authors=["Alice Example"], doi=doi,
+    )
+    monkeypatch.setattr(pipeline, "refresh_authoritative", lambda paper, **_kwargs: paper)
+    monkeypatch.setattr(pipeline, "fetch_bibtex", lambda paper, **_kwargs: (
+        f"@article{{test, title={{{paper.title}}}, author={{Alice Example}}}}",
+        "https://doi.org/example",
+        {},
+    ))
+    monkeypatch.setattr(pipeline, "fetch_fulltext", lambda *_args, **_kwargs: {"sha256": "a" * 64, "path": "content.txt"})
+
+    facts, manifest = pipeline.materialize(
+        candidates_payload={"candidates": [paper.to_dict()], "plan": {"core_keywords": []}},
+        selections=[SelectionEntry(paper.paper_id, 1.0, "Security", "ranked", "core")],
+        data_dir=tmp_path,
+        target=1,
+        scholar_limit=0,
+    )
+
+    assert facts["total"] == 0
+    assert manifest["rejected"] == [{"paper_id": paper.paper_id, "reason": "core_keywords_missing"}]
 
 
 @pytest.mark.parametrize(

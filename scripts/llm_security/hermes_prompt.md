@@ -30,16 +30,37 @@ You orchestrate the daily run, but scripts own every paper fact.
   to inventing certainty in `reason`.
 - Keep `reason` a short ranking rationale, not a restatement or correction of
   title, authors, venue, status, DOI, URL, BibTeX, or abstract.
+- Derive `category` from the paper's research content: use the title,
+  authoritative abstract, and bounded full-text sections to name the research
+  direction. Never use platform/source labels such as `arXiv`, `OpenReview`, a
+  conference or journal name, or subject codes such as `cs.CR` as a category.
 - In Chinese analysis, separate direct statements supported by the frozen paper
   from your interpretation. Explain the problem, method, evidence/results,
   contribution, limitations, and applicability when the bounded sections
   support them. State uncertainty rather than inferring a result from missing
-  text.
+  text. `summary_zh` must summarize the research question, method, and
+  supported evidence/results; it must not describe the hosting or discovery
+  platform instead of the research.
+
+The rendered digest groups papers by research direction first. Within each
+paper, mark the formal venue when one is verified, or label an unmatched paper
+as an `arXiv` preprint, followed by its script-owned publication status.
 
 ## Run sequence
 
 1. Write `search-plan.json` matching the schema produced by:
    `python scripts/llm_security/run_daily.py init-plan --out search-plan.json`
+   Use only the exact baseline registry keys below. These are identifiers, not
+   display names: `usenix-security`, `ieee-sp`, `acm-ccs`, `ndss`, `iclr`,
+   `neurips`, `icml`, `cvpr`, `eccv`, `acl`, `emnlp`, `aaai`, `ijcai`,
+   `tdsc`, `tifs`, and `tops` for `venue_groups`; use only `ieee-sp`,
+   `acm-ccs`, `tdsc`, `tifs`, or `tops` for `crossref_venues`. For
+   `openreview_venues`, use an exact registered cycle ID such as
+   `ICLR.cc/2026/Conference`, `NeurIPS.cc/2026/Conference`, or
+   `ICML.cc/2026/Conference` (the year may change, but the family and suffix
+   must remain registered). Never send a display name, an invented group such
+   as `top_security`, or a guessed OpenReview ID; omit an uncertain value and
+   let the baseline report the missing source.
 2. Run `collect --plan search-plan.json --out candidates.json`.
 3. Read candidate facts and write `selection.json` with only:
    `paper_id`, `score`, `category`, `reason`, and required `track`
@@ -76,6 +97,24 @@ python scripts/llm_security/run_daily.py route-catalog verify \
   --source official --route-kind index --evidence-source hermes \
   --data-dir "$LLMSD_DATA_DIR"
 ```
+
+The SQLite catalog is the durable hand-off between Hermes runs. It is stored at
+`LLMSD_DATA_DIR/route_catalog.sqlite3` (and may be restored by the Actions
+cache). Store one row per verified URL with the registered venue, source,
+adapter, and `route_kind`; do not store the Bing URL or a link merely because a
+snippet mentions it. Failed and rejected checks stay visible for diagnosis but
+must never be treated as reusable. A later run may read only verified index
+rows through the matching registered `OfficialAdapter`; the adapter applies
+its URL grammar, year, and collection-scope checks before using a row. For
+PMLR/ICML, a `/vNNN/` row is reusable only for that same volume and the root
+index remains the fallback. OpenReview continues to use its official API
+client and exact cycle ID; an OpenReview browser URL may be evidence, but is
+not a route hint consumer. The official adapter still performs a fresh bounded
+request and deterministic parse, so the catalog cannot become a facts cache.
+
+The catalog identity is always the URL actually fetched. Any
+`provenance_url` supplied to the browser is diagnostic metadata and cannot
+relabel the response bytes or the persisted route.
 
 For a headless request, pass the same registered venue context to
 `headless_discover.py` so the captured response is persisted without a second

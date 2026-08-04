@@ -35,6 +35,15 @@ verified abstract and bounded full text. In Chinese analysis, distinguish what
 the frozen paper directly supports from your interpretation and state
 uncertainty when the retrieved sections do not support a conclusion.
 
+Derive `category` as a research-direction label from the paper's title,
+authoritative abstract, and the bounded full-text sections you read. Do not use
+platform or source labels such as `arXiv`, `OpenReview`, a venue name, or a
+subject code such as `cs.CR` as a category. `summary_zh` must summarize the
+research question, approach, and supported evidence/results; it must not become
+a description of where the paper was hosted or discovered. The rendered output
+groups papers by research direction first, then marks each paper's formal venue
+or arXiv preprint and publication status.
+
 Hermes may propose strategy-only evolution overlays with `reflect`; it may not
 write facts, HTTP endpoints, credentials, or single-paper title/DOI/date values.
 Run `validate-evolution` and `shadow-evolution` before activation. Activation is

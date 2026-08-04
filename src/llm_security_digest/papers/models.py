@@ -478,9 +478,15 @@ class SearchPlan:
             raise ValueError("at least one non-empty query is required")
         if len(self.queries) > 30 or any(len(query) > 500 for query in self.queries):
             raise ValueError("query plan exceeds safety limits")
-        if len(self.filter_keywords) > 100 or any(not item.strip() or len(item) > 100 for item in self.filter_keywords):
+        if len(self.filter_keywords) > 100 or any(
+            not isinstance(item, str) or not item.strip() or len(item) > 100
+            for item in self.filter_keywords
+        ):
             raise ValueError("filter_keywords exceeds safety limits")
-        if len(self.core_keywords) > 100 or any(not item.strip() or len(item) > 100 for item in self.core_keywords):
+        if len(self.core_keywords) > 100 or any(
+            not isinstance(item, str) or not item.strip() or len(item) > 100
+            for item in self.core_keywords
+        ):
             raise ValueError("core_keywords exceeds safety limits")
         supported = {"arxiv", "official", "openreview", "crossref", "ieee_xplore"}
         if not self.sources:

@@ -28,7 +28,7 @@ def _analysis_value(analysis: dict, key: str, default: str = "（待解读）") 
 def render_paper_md(paper: PaperFacts, analysis: dict, idx: int) -> str:
     paper.validate_materialized()
     authors = ", ".join(paper.authors)
-    source = paper.venue or f"arXiv preprint `{paper.primary_category or 'unknown'}`"
+    source = f"正式 venue：{paper.venue}" if paper.venue else "arXiv 预印本"
     classification = {"accepted": "会议接收", "published": "正式发表", "preprint": "arXiv 预印本"}[paper.publication_status]
     published_date = (paper.published_at or "")[:10]
     category = _analysis_value(analysis, "category", "Other")
@@ -42,10 +42,10 @@ def render_paper_md(paper: PaperFacts, analysis: dict, idx: int) -> str:
     return f"""### [{idx}]. {paper.title}
 
 **作者**：{authors}
+**研究类别**：{category}
 **会议/来源**：{source} ({published_date})
 {source_comment}**链接**：[论文主页]({paper.landing_url}) | [正文]({paper.pdf_url}){scholar_line}
 **分类**：{classification}
-**研究类别**：{category}
 
 **Abstract (EN — 权威来源原文)**：
 
