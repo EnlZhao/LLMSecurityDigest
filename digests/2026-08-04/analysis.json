@@ -1,0 +1,84 @@
+{
+  "papers": [
+    {
+      "paper_id": "arxiv:2606.31227",
+      "summary_zh": "The fast growth of open-source AI infrastructure, from model serving engines and agent platforms to the Model Context Protocol (MCP) ecosystem and the language models themselves, has outpaced the secu",
+      "problem_zh": "研究场景与问题：The fast growth of open-source AI infrastructure, from model serving engines and agent platforms to the Model Context Pr……现有工作在该场景下存在 gap，本文针对该 gap 开展工作。",
+      "method_zh": "方法要点（基于 abstract 事实摘要）：rity tooling available to defend it. We present AI-Infra-Guard, an open-source framework that organizes AI red teaming around a single observation: the attack surface of an AI agent is stratified acro",
+      "result_zh": "实验与结果（基于 abstract 事实摘要）：ss layers (infrastructure, protocol/tool, agent behavior, and model), and no single detection paradigm fits all of them. The framework therefore matches a paradigm to each layer, from deterministic ru",
+      "contribution_zh": "主要贡献：提出针对上述 gap 的 in-environment / 系统级方案；在 [arXiv 实验设置] 下评估；给出未来方向。"
+    },
+    {
+      "paper_id": "arxiv:2606.30783",
+      "summary_zh": "We identify a security-fidelity tradeoff in defending LLMs against indirect prompt injection: defenses resist injected instructions largely by suppressing untrusted text, which corrupts tasks that mus",
+      "problem_zh": "研究场景与问题：We identify a security-fidelity tradeoff in defending LLMs against indirect prompt injection: defenses resist injected i……现有工作在该场景下存在 gap，本文针对该 gap 开展工作。",
+      "method_zh": "方法要点（基于 abstract 事实摘要）：t preserve it, such as translation and document editing. Attack-success metrics cannot see this, because a model that ignores an injection and one that faithfully processes it as data score identicall",
+      "result_zh": "实验与结果（基于 abstract 事实摘要）：y. We introduce SecFid, a benchmark built so that executing an injection, processing it as data, and ignoring it produce distinguishable outputs. This makes fidelity measurable and exposes a frontier:",
+      "contribution_zh": "主要贡献：提出针对上述 gap 的 in-environment / 系统级方案；在 [arXiv 实验设置] 下评估；给出未来方向。"
+    },
+    {
+      "paper_id": "arxiv:2606.30755",
+      "summary_zh": "Claw-like AI agents (e.g., OpenClaw) are always-on processes with persistent access to credentials, files, tools, and external services. They take on system-level responsibilities -- installing packag",
+      "problem_zh": "研究场景与问题：Claw-like AI agents (e.g., OpenClaw) are always-on processes with persistent access to credentials, files, tools, and ex……现有工作在该场景下存在 gap，本文针对该 gap 开展工作。",
+      "method_zh": "方法要点（基于 abstract 事实摘要）：es, maintaining state, scheduling subtasks, and mediating I/O -- making security failures far more severe than in other agents. Yet existing benchmarks focus on model responses and tool calls, leaving",
+      "result_zh": "实验与结果（基于 abstract 事实摘要）：cross-component failure modes largely unmeasured. We adopt a computer-system analogy: treating a Claw-like agent as an agentic computer system whose gateway runtime plays an OS-like mediation role, w",
+      "contribution_zh": "主要贡献：提出针对上述 gap 的 in-environment / 系统级方案；在 [arXiv 实验设置] 下评估；给出未来方向。"
+    },
+    {
+      "paper_id": "arxiv:2606.29073",
+      "summary_zh": "Model Context Protocol (MCP)-style ecosystems give language-model applications a practical connection layer for tools, resources, prompts, and transports. As agents move from connection to execution, ",
+      "problem_zh": "研究场景与问题：Model Context Protocol (MCP)-style ecosystems give language-model applications a practical connection layer for tools, r……现有工作在该场景下存在 gap，本文针对该 gap 开展工作。",
+      "method_zh": "方法要点（基于 abstract 事实摘要）：security decisions often remain split across clients, servers, prompts, approval dialogs, OAuth deployments, and logs. This paper asks whether a runtime can make execution-layer invariants explicit an",
+      "result_zh": "实验与结果（基于 abstract 事实摘要）：d testable while preserving MCP-like workflows. We define eight invariants: metadata non-authority, grant-backed approval, canonical resources, principal binding, scoped capability invocation, source-",
+      "contribution_zh": "主要贡献：提出针对上述 gap 的 in-environment / 系统级方案；在 [arXiv 实验设置] 下评估；给出未来方向。"
+    },
+    {
+      "paper_id": "arxiv:2606.27990",
+      "summary_zh": "LLM-based SSH honeypots can generate believable interactions, but evaluations indicate they remain somewhat identifiable to determined attackers, indicating the need for a better scaffolding. We prese",
+      "problem_zh": "研究场景与问题：LLM-based SSH honeypots can generate believable interactions, but evaluations indicate they remain somewhat identifiable……现有工作在该场景下存在 gap，本文针对该 gap 开展工作。",
+      "method_zh": "方法要点（基于 abstract 事实摘要）：nt a new LLM-based honeypot design that uses a multi-agent, multi-LLM architecture to address the limitations of the previous shelLM LLM honeypot. Our honeypot, called AdvancedShelLM, uses two LLM age",
+      "result_zh": "实验与结果（基于 abstract 事实摘要）：nts, a Manager and a Worker, that better understand the commands while reducing incorrect responses and increasing deception. It implements an advanced permanent filesystem, allowing many simultaneous",
+      "contribution_zh": "主要贡献：提出针对上述 gap 的 in-environment / 系统级方案；在 [arXiv 实验设置] 下评估；给出未来方向。"
+    },
+    {
+      "paper_id": "arxiv:2606.24322",
+      "summary_zh": "LLM agents increasingly rely on persistent long-term memory, which creates a critical vulnerability that we study here: memory poisoning. An adversary can store untrusted content in one session that l",
+      "problem_zh": "研究场景与问题：LLM agents increasingly rely on persistent long-term memory, which creates a critical vulnerability that we study here: ……现有工作在该场景下存在 gap，本文针对该 gap 开展工作。",
+      "method_zh": "方法要点（基于 abstract 事实摘要）：ater steers a consequential action, such as a payment, a setting change, or data exfiltration, in a future session. Existing defenses base a memory item's authority to act on either its content (detec",
+      "result_zh": "实验与结果（基于 abstract 事实摘要）：tion or trust-scoring) or its derivation history (lineage). We show that both signals are malleable. An attacker can launder an untrusted origin through three channels specific to LLM agents: the agen",
+      "contribution_zh": "主要贡献：提出针对上述 gap 的 in-environment / 系统级方案；在 [arXiv 实验设置] 下评估；给出未来方向。"
+    },
+    {
+      "paper_id": "arxiv:2606.17986",
+      "summary_zh": "Cyber deception and Moving Target Defense are promising strategies that aim to disrupt adversaries by increasing uncertainty. However, sustaining long-lived, credible interactive sessions with adversa",
+      "problem_zh": "研究场景与问题：Cyber deception and Moving Target Defense are promising strategies that aim to disrupt adversaries by increasing uncerta……现有工作在该场景下存在 gap，本文针对该 gap 开展工作。",
+      "method_zh": "方法要点（基于 abstract 事实摘要）：ries remains an open challenge. Large Language Models (LLMs) offer a promising path toward more dynamic deception systems, but suffer from key limitations that fundamentally limit their applicability,",
+      "result_zh": "实验与结果（基于 abstract 事实摘要）：including: lack of persistent state, output inconsistencies, hallucinations, latency, and susceptibility to behavioral subversion that may reveal the deception.   We propose ShellGames, an SSH shell",
+      "contribution_zh": "主要贡献：提出针对上述 gap 的 in-environment / 系统级方案；在 [arXiv 实验设置] 下评估；给出未来方向。"
+    },
+    {
+      "paper_id": "arxiv:2606.15810",
+      "summary_zh": "Large language models deployed as commercial APIs are vulnerable to model extraction attacks, while existing defenses either act too late or degrade utility for legitimate users. We propose \\textbf{Kn",
+      "problem_zh": "研究场景与问题：Large language models deployed as commercial APIs are vulnerable to model extraction attacks, while existing defenses ei……现有工作在该场景下存在 gap，本文针对该 gap 开展工作。",
+      "method_zh": "方法要点（基于 abstract 事实摘要）：owledge Trap}, a defense that redirects extraction attacks toward low-transferability knowledge through a \\emph{Honeypot Knowledge Graph} (HKG) and breadcrumb-guided exploration. Instead of blocking q",
+      "result_zh": "实验与结果（基于 abstract 事实摘要）：ueries or perturbing outputs, Knowledge Trap consumes the attacker's limited query budget on knowledge with negligible downstream utility while preserving benign-user performance. Experiments in medic",
+      "contribution_zh": "主要贡献：提出针对上述 gap 的 in-environment / 系统级方案；在 [arXiv 实验设置] 下评估；给出未来方向。"
+    },
+    {
+      "paper_id": "arxiv:2606.11817",
+      "summary_zh": "Large Language Models (LLMs) are increasingly used for code generation, raising concerns that they may be misused to produce malicious code. Meanwhile, Grammar-Constrained Decoding (GCD) has been wide",
+      "problem_zh": "研究场景与问题：Large Language Models (LLMs) are increasingly used for code generation, raising concerns that they may be misused to pro……现有工作在该场景下存在 gap，本文针对该 gap 开展工作。",
+      "method_zh": "方法要点（基于 abstract 事实摘要）：ly adopted to improve the reliability of LLM-generated code by enforcing syntactic validity. In this paper, we reveal a counterintuitive risk: this reliability-oriented technique can itself become an",
+      "result_zh": "实验与结果（基于 abstract 事实摘要）：attack surface. We uncover a new jailbreak attack, termed CodeSpear, that exploits GCD to induce LLMs into generating malicious code. Our experiments show that simply applying a benign code grammar co",
+      "contribution_zh": "主要贡献：提出针对上述 gap 的 in-environment / 系统级方案；在 [arXiv 实验设置] 下评估；给出未来方向。"
+    },
+    {
+      "paper_id": "arxiv:2606.10322",
+      "summary_zh": "Large Language Models (LLMs) in multi-turn interactions maintain evolving context rather than generating isolated responses, making them vulnerable to prompt-injection and context-poisoning attacks in",
+      "problem_zh": "研究场景与问题：Large Language Models (LLMs) in multi-turn interactions maintain evolving context rather than generating isolated respon……现有工作在该场景下存在 gap，本文针对该 gap 开展工作。",
+      "method_zh": "方法要点（基于 abstract 事实摘要）：which locally plausible adversarial fragments gradually distort reasoning trajectories. Existing defenses mainly filter individual outputs and often ignore context evolution across turns, leaving lon",
+      "result_zh": "实验与结果（基于 abstract 事实摘要）：g-horizon reasoning exposed. Although the Model Context Protocol (MCP) standardizes context exchange and tool invocation, it functions as a passive routing layer and does not enforce contextual stabil",
+      "contribution_zh": "主要贡献：提出针对上述 gap 的 in-environment / 系统级方案；在 [arXiv 实验设置] 下评估；给出未来方向。"
+    }
+  ]
+}

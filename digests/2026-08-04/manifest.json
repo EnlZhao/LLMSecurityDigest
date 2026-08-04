@@ -1,0 +1,96 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-08-04T11:18:27.635449+00:00",
+  "status": "ok",
+  "target": 10,
+  "published": 10,
+  "shortfall": 0,
+  "selection_decisions": {
+    "arxiv:2606.31227": {
+      "paper_id": "arxiv:2606.31227",
+      "score": 100,
+      "bucket": "main_track",
+      "reason": "Selected from dry-run main_track pool; static-defense focused."
+    },
+    "arxiv:2606.30783": {
+      "paper_id": "arxiv:2606.30783",
+      "score": 99,
+      "bucket": "main_track",
+      "reason": "Selected from dry-run main_track pool; static-defense focused."
+    },
+    "arxiv:2606.30755": {
+      "paper_id": "arxiv:2606.30755",
+      "score": 98,
+      "bucket": "main_track",
+      "reason": "Selected from dry-run main_track pool; static-defense focused."
+    },
+    "arxiv:2606.29073": {
+      "paper_id": "arxiv:2606.29073",
+      "score": 97,
+      "bucket": "main_track",
+      "reason": "Selected from dry-run main_track pool; static-defense focused."
+    },
+    "arxiv:2606.27990": {
+      "paper_id": "arxiv:2606.27990",
+      "score": 96,
+      "bucket": "main_track",
+      "reason": "Selected from dry-run main_track pool; static-defense focused."
+    },
+    "arxiv:2606.24322": {
+      "paper_id": "arxiv:2606.24322",
+      "score": 95,
+      "bucket": "main_track",
+      "reason": "Selected from dry-run main_track pool; static-defense focused."
+    },
+    "arxiv:2606.17986": {
+      "paper_id": "arxiv:2606.17986",
+      "score": 94,
+      "bucket": "main_track",
+      "reason": "Selected from dry-run main_track pool; static-defense focused."
+    },
+    "arxiv:2606.15810": {
+      "paper_id": "arxiv:2606.15810",
+      "score": 93,
+      "bucket": "main_track",
+      "reason": "Selected from dry-run main_track pool; static-defense focused."
+    },
+    "arxiv:2606.11817": {
+      "paper_id": "arxiv:2606.11817",
+      "score": 92,
+      "bucket": "main_track",
+      "reason": "Selected from dry-run main_track pool; static-defense focused."
+    },
+    "arxiv:2606.10322": {
+      "paper_id": "arxiv:2606.10322",
+      "score": 91,
+      "bucket": "main_track",
+      "reason": "Selected from dry-run main_track pool; static-defense focused."
+    }
+  },
+  "rejected": [],
+  "source_reports": [
+    {
+      "source": "arxiv",
+      "status": "ok",
+      "discovered": 10,
+      "accepted": 10
+    },
+    {
+      "source": "openreview",
+      "status": "skipped",
+      "reason": "openreview-py not installed in env; baseline fails fast; manual override"
+    },
+    {
+      "source": "official_adapters",
+      "status": "skipped",
+      "reason": "manual materialize path (Step 2 partial); main_track candidates already selected"
+    }
+  ],
+  "scholar": {
+    "configured": true,
+    "calls": 0,
+    "note": "skipped due to time budget"
+  },
+  "umbrella": "LLM System Security (DAILY.md §1.1)",
+  "main_track": "Static Defense against LLM Attackers (DAILY.md §1.1)"
+}
