@@ -54,7 +54,11 @@ def main() -> int:
             }
         elif args.adapter or args.route_kind != "index" or args.source != "official":
             raise HeadlessDiscoveryError("--venue is required for route-catalog metadata")
-        route_catalog = RouteCatalog(args.data_dir) if route_context is not None else None
+        # A request may carry its own normalized route context.  Construct the
+        # catalog for that path too, otherwise ``HeadlessDiscovery`` falls back
+        # to its default data directory and ignores the caller's --data-dir.
+        request_has_route_context = isinstance(request, dict) and request.get("route_context") is not None
+        route_catalog = RouteCatalog(args.data_dir) if route_context is not None or request_has_route_context else None
         result = (
             discovery.collect_raw(request, route_catalog=route_catalog, route_context=route_context)
             if args.raw
@@ -76,7 +80,8 @@ def main() -> int:
         return 2
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps({"status": result["status"], "evidence": len(result["evidence"]), "facts_written": False}, ensure_ascii=False))
+    evidence = result.get("evidence", result.get("responses", []))
+    print(json.dumps({"status": result["status"], "evidence": len(evidence), "facts_written": False}, ensure_ascii=False))
     return 0 if result["status"] in {"ok", "partial"} else 3
 
 
