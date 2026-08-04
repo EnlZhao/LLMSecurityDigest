@@ -42,6 +42,15 @@ AGENTS.md
 # --- Misc generated docs that were already excluded ---
 docs/superpowers/
 
+
+# --- Launchd artifacts ---
+# launchd/install.sh renders the .plist.template into a concrete .plist
+# at install time. The concrete plist contains absolute paths to the
+# current machine and must never be committed. The template and the
+# install script are committed.
+launchd/com.paperdaily.daily.plist
+launchd/install.lock
+
 # --- Tests ---
 # Keep source regression tests under version control. Their caches remain
 # ignored above.

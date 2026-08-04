@@ -6,18 +6,18 @@
   <string>com.paperdaily.daily</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/hengzhao/PaperDaily/.venv/bin/python</string>
+    <string>${REPO_ROOT}/.venv/bin/python</string>
     <string>-m</string>
     <string>llm_security_digest.runner</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>/Users/hengzhao/PaperDaily</string>
+  <string>${REPO_ROOT}</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>TZ</key>
     <string>Asia/Shanghai</string>
     <key>PATH</key>
-    <string>/Users/hengzhao/PaperDaily/.venv/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <string>${REPO_ROOT}/.venv/bin:/usr/local/bin:/usr/bin:/bin</string>
     <!--
       SERPAPI_API_KEY and LLMSD_CONTACT_EMAIL must be set in the user's shell
       environment via ~/.hermes/.env or launchd's EnvironmentVariables below.
@@ -34,9 +34,9 @@
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>/Users/hengzhao/PaperDaily/logs/launchd.out.log</string>
+  <string>${REPO_ROOT}/logs/launchd.out.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/hengzhao/PaperDaily/logs/launchd.err.log</string>
+  <string>${REPO_ROOT}/logs/launchd.err.log</string>
   <key>ProcessType</key>
   <string>Background</string>
 </dict>
