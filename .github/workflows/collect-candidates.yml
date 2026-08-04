@@ -2,6 +2,15 @@ name: Collect paper candidates
 
 on:
   workflow_dispatch:
+    inputs:
+      plan_json:
+        description: Optional validated SearchPlan JSON for an Hermes follow-up collection
+        required: false
+        type: string
+      request_id:
+        description: Optional correlation id for an external orchestrator
+        required: false
+        type: string
   schedule:
     # 06:15 Asia/Shanghai. This job only collects no-key source candidates.
     - cron: "15 22 * * *"
@@ -30,7 +39,35 @@ jobs:
           python -m pip install playwright
           python -m playwright install --with-deps chromium
 
+      - name: Write requested plan or baseline plan
+        env:
+          PLAN_JSON: ${{ inputs.plan_json }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/llmsd"
+          if [ -n "$PLAN_JSON" ]; then
+            python - <<'PY'
+            import json
+            import os
+            from pathlib import Path
+
+            value = os.environ["PLAN_JSON"]
+            if len(value.encode("utf-8")) > 32 * 1024:
+                raise SystemExit("plan_json exceeds 32 KiB")
+            plan = json.loads(value)
+            if not isinstance(plan, dict):
+                raise SystemExit("plan_json must be a JSON object")
+            Path(os.environ["RUNNER_TEMP"], "llmsd", "search-plan.json").write_text(
+                json.dumps(plan, ensure_ascii=False), encoding="utf-8"
+            )
+            PY
+          else
+            python scripts/llm_security/run_daily.py init-plan \
+              --out "$RUNNER_TEMP/llmsd/search-plan.json"
+          fi
+
       - name: Collect formal venue, OpenReview, and arXiv candidates
+        id: collect
+        continue-on-error: true
         env:
           # Optional: anonymous OpenReview access remains the default. If
           # either secret is missing, the source report records the resulting
@@ -43,18 +80,20 @@ jobs:
           # those bytes before any candidate can later be materialized.
           LLMSD_HEADLESS_FALLBACK: "1"
         run: |
-          mkdir -p "$RUNNER_TEMP/llmsd"
-          python scripts/llm_security/run_daily.py init-plan \
-            --out "$RUNNER_TEMP/llmsd/search-plan.json"
           python scripts/llm_security/run_daily.py collect \
             --plan "$RUNNER_TEMP/llmsd/search-plan.json" \
             --out "$RUNNER_TEMP/llmsd/candidates.json" \
             --data-dir "$RUNNER_TEMP/llmsd"
 
       - name: Upload candidate artifact for Hermes ranking
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: paper-candidates-${{ github.run_id }}
           path: ${{ runner.temp }}/llmsd/candidates.json
           if-no-files-found: error
           retention-days: 7
+
+      - name: Fail after preserving collection diagnostics
+        if: steps.collect.outcome != 'success'
+        run: exit 1

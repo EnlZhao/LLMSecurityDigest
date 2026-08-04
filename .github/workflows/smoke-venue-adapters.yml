@@ -115,8 +115,11 @@ jobs:
               "queries": ["LLM security"],
               "sources": [source],
               "venue_groups": [venue],
-              "date_from": "2024-01-01",
-              "date_to": "2024-12-31",
+              # Crossref deposits use DOI/container/ISSN metadata and are
+              # not tied to an annual endpoint. Keep its smoke query
+              # cross-year so a current deposit can exercise the filter.
+              "date_from": None if source == "crossref" else "2024-01-01",
+              "date_to": None if source == "crossref" else "2024-12-31",
               "max_results_per_query": 1,
               "max_results_per_venue": 1,
               "target": 10,
@@ -124,10 +127,14 @@ jobs:
           }
           (work / "plan.json").write_text(json.dumps(plan), encoding="utf-8")
           PY
+          collect_status=0
           python scripts/llm_security/run_daily.py collect \
             --plan .smoke/plan.json \
             --out .smoke/candidates.json \
-            --data-dir .smoke/data
+            --data-dir .smoke/data || collect_status=$?
+          if [ "$collect_status" -ne 0 ] && [ "$collect_status" -ne 3 ]; then
+            exit "$collect_status"
+          fi
           python - <<'PY'
           import json
           import os
@@ -145,14 +152,29 @@ jobs:
               raise SystemExit(f"expected exactly one source report for {venue}, got {len(reports)}")
           report = reports[0]
           source = os.environ["SOURCE"]
-          passed = report.get("status") == "ok" and report.get("requests_succeeded", 0) >= 1
           if source == "official":
-              passed = passed and report.get("records_valid", 0) >= 1
+              passed = (
+                  report.get("status") == "ok"
+                  and report.get("requests_succeeded", 0) >= 1
+                  and report.get("records_valid", 0) >= 1
+              )
           else:
               # Crossref is a registered metadata query. It can correctly
               # reject every bounded result as incomplete; the smoke asserts
-              # that the official endpoint and venue/container filter ran.
-              passed = passed and report.get("records_scanned", 0) >= 1
+              # that the API request and venue/container filter ran, without
+              # requiring a materializable record from a keyword hit.
+              classified = sum(
+                  report.get(field, 0)
+                  for field in ("records_valid", "records_filtered", "records_incomplete")
+              )
+              passed = (
+                  report.get("status") in {"ok", "partial"}
+                  and report.get("requests_succeeded", 0) >= 1
+                  and report.get("requests_failed", 0) == 0
+                  and not report.get("errors")
+                  and report.get("records_scanned", 0) >= 1
+                  and classified >= 1
+              )
           if not passed:
               print(json.dumps(report, ensure_ascii=False, indent=2), file=sys.stderr)
               raise SystemExit(f"{source} adapter smoke failed for {venue}")

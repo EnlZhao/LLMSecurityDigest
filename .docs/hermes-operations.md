@@ -411,6 +411,41 @@ and never executes an evolution candidate or writes `facts.json`. A persistent
 Hermes host may consume the artifact after checking the source reports and then
 run the baseline materializer locally.
 
+### Hermes follow-up collection
+
+The daily schedule is only the baseline trigger. After Hermes reads a candidate
+artifact and decides that a general query strategy needs another bounded pass,
+it may dispatch `collect-candidates.yml` again with the `plan_json` input. The
+workflow writes that JSON to a file and `SearchPlan.load()` applies the same
+field allowlist, registered-source checks, venue registry, date validation,
+and request limits as a local run. The input cannot execute shell, add an
+unregistered host, alter fact rules, or write `facts.json`.
+
+Use a GitHub App installation token with **Actions: write** and **Contents:
+read** for this API call. Do not use an owner personal token, and do not save a
+long-lived token in `.env`, a repository secret, an artifact, or the Hermes
+working directory. Hermes should obtain a short-lived installation token from
+an external secret manager or KMS immediately before dispatch. A full takeover
+of the same server identity that can read a local secret store cannot be made
+safe by application code; external key isolation is required.
+
+```bash
+curl --fail-with-body -X POST \
+  -H "Accept: application/vnd.github+json" \
+  -H "Authorization: Bearer $GITHUB_APP_INSTALLATION_TOKEN" \
+  -H "X-GitHub-Api-Version: 2022-11-28" \
+  "https://api.github.com/repos/OWNER/REPO/actions/workflows/collect-candidates.yml/dispatches" \
+  -d '{"ref":"main","inputs":{"request_id":"RUN-ID","plan_json":"PLAN-JSON"}}'
+```
+
+`PLAN-JSON` must be compact JSON encoding of a `SearchPlan`, and is capped at
+32 KiB before the baseline validates it. The collection step uploads its
+candidate/source-report artifact even when it returns the expected empty-pool
+status, then marks the run failed. That preserves diagnostics for Hermes while
+keeping an empty formal collection visible rather than presenting it as a
+successful digest. The caller should use the run ID or `request_id` only for
+correlation, never as a paper fact.
+
 ### Optional headless browser evidence
 
 Some official portals render candidate links only after JavaScript runs. On a
