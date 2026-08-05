@@ -197,11 +197,15 @@ below are only observability, not content stored in Git. All 18 checks passed.
 | arXiv | passed | `arxiv.org/bibtex/<id>` |
 
 The smoke run used the no-key official, OpenReview, arXiv, and Crossref paths;
-the optional IEEE Xplore API was not required. An endpoint failure in a future
-run remains an operational report and cannot be replaced by a Scholar snippet,
-browser text, or Hermes prose. A registered headless fallback may retry the
-same source response, but the response still goes through the baseline parser,
-identity checks, and BibTeX validation before it can become a fact.
+the optional IEEE Xplore key was also present for a separate API probe, but
+S&P, TDSC, and TIFS each returned HTTP 403. That failure is an explicit source
+report and is not required for the successful CSDL/Crossref DOI paths. An
+endpoint failure in a future run remains an operational report and cannot be
+replaced by a Scholar snippet, browser text, or Hermes prose. A registered
+headless fallback may retry the same public source response, but it never
+replays a secret-bearing API URL; every returned response still goes through
+the baseline parser, identity checks, and BibTeX validation before it can
+become a fact.
 
 ### Authoritative API and key boundaries
 
