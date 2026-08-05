@@ -339,6 +339,21 @@ def normalize_title(value: str) -> str:
     # BibTeX commonly wraps capitalization in braces and encodes accents as
     # LaTeX commands. Remove formatting commands before identity comparison.
     value = value or ""
+    # BibTeX exports also use text macros for letters that do not have a
+    # combining-accent spelling (for example ``{\\ss}`` in ACL names). Map
+    # these deterministic macros before stripping the remaining formatting
+    # commands; otherwise a real author can be silently shortened.
+    latex_letters = {
+        r"\ss": "ß", r"\SS": "ẞ",
+        r"\ae": "æ", r"\AE": "Æ", r"\oe": "œ", r"\OE": "Œ",
+        r"\o": "ø", r"\O": "Ø", r"\aa": "å", r"\AA": "Å",
+        r"\l": "ł", r"\L": "Ł", r"\ij": "ĳ", r"\IJ": "Ĳ",
+        r"\dj": "đ", r"\DJ": "Đ", r"\dh": "ð", r"\DH": "Ð",
+        r"\th": "þ", r"\TH": "Þ", r"\ng": "ŋ", r"\NG": "Ŋ",
+        r"\eth": "ð", r"\ETH": "Ð",
+    }
+    for macro, character in latex_letters.items():
+        value = value.replace(macro, character)
     for _ in range(3):
         value = re.sub(r"\\(?:text[a-zA-Z]+|emph|mathrm|mathbf|mathit)\s*\{([^{}]*)\}", r"\1", value)
     # BibTeX uses commands such as {\\\"U}ber for Unicode characters. Reduce

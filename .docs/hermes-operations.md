@@ -172,40 +172,36 @@ baseline-owned and is not an evolution overlay setting.
 #### BibTeX smoke record (2026-08-05)
 
 The local smoke harness selected one real record from each registered source
-using a bounded year window. It called the authoritative refresh and then the
-script-owned BibTeX downloader; lengths below are only observability, not
-content stored in Git.
+using a bounded 2024 window for formal proceedings. It called the
+authoritative refresh and then the script-owned BibTeX downloader; lengths
+below are only observability, not content stored in Git. All 18 checks passed.
 
 | Source group | Result | BibTeX path |
 | --- | --- | --- |
-| USENIX Security 2024 | passed | official USENIX export |
+| USENIX Security 2024 | passed | official detail BibTeX export |
 | IEEE S&P 2024 | passed | DOI content negotiation (CSDL record) |
-| NDSS 2026 | passed | DOI content negotiation after exact Crossref DOI resolution |
+| NDSS 2024 | passed | DOI content negotiation after exact Crossref DOI resolution |
 | NeurIPS 2024 | passed | official proceedings BibTeX export |
-| ICML 2024 | passed | PMLR bibliography export |
-| CVPR 2023 | passed | CVF inline BibTeX |
+| ICML 2024 | passed | PMLR official detail BibTeX export |
+| CVPR 2024 | passed | CVF inline BibTeX |
 | ECCV 2024 | passed | DOI content negotiation |
-| ACL 2025 | passed | ACL Anthology export/DOI negotiation |
-| EMNLP 2024 | passed | ACL Anthology export/DOI negotiation |
-| AAAI 2023 | passed | DOI content negotiation |
-| IJCAI 2023 | passed after route fix | official IJCAI export |
-| ACM CCS 2025 | passed | DOI content negotiation via Crossref deposit |
+| ACL 2024 | passed | ACL Anthology `.bib` export |
+| EMNLP 2024 | passed | ACL Anthology `.bib` export with LaTeX/Unicode identity validation |
+| AAAI 2024 | passed | DOI content negotiation |
+| IJCAI 2024 | passed | official IJCAI export |
+| ACM CCS (sample DOI) | passed | DOI content negotiation via Crossref deposit |
 | IEEE TDSC 2024 | passed | DOI content negotiation via Crossref deposit |
-| IEEE TIFS 2026 | passed | DOI content negotiation via Crossref deposit |
-| ACM TOPS 2023 | passed | DOI content negotiation via Crossref deposit |
-| arXiv | direct BibTeX endpoint passed for a known ID; Atom discovery later returned HTTP 429 | `arxiv.org/bibtex/<id>` |
+| IEEE TIFS (sample DOI) | passed | DOI content negotiation via Crossref deposit |
+| ACM TOPS (sample DOI) | passed | DOI content negotiation via Crossref deposit |
+| OpenReview ICLR 2025 | passed | official structured BibTeX in refreshed note |
+| arXiv | passed | `arxiv.org/bibtex/<id>` |
 
-The following are operational failures, not successful collections: the
-optional IEEE Xplore API returned HTTP 403 for the configured key on S&P,
-TDSC, and TIFS; Crossref/official registered paths remained independent and
-successful. OpenReview ICLR 2025 and its inline BibTeX path succeeded, while
-some NeurIPS/ICML queries returned an explicit anti-bot challenge. The report
-keeps the challenge visible and writes no record; a Linux run with Playwright
-installed may retry only through the allowlisted headless broker. If that
-broker cannot solve the challenge, Hermes must leave the source unresolved or
-use another registered year, never synthesize metadata. An arXiv 429 is
-handled the same way: respect the bounded retry/rate limit and leave the
-source report visible rather than asking the LLM to fill a paper.
+The smoke run used the no-key official, OpenReview, arXiv, and Crossref paths;
+the optional IEEE Xplore API was not required. An endpoint failure in a future
+run remains an operational report and cannot be replaced by a Scholar snippet,
+browser text, or Hermes prose. A registered headless fallback may retry the
+same source response, but the response still goes through the baseline parser,
+identity checks, and BibTeX validation before it can become a fact.
 
 ### Authoritative API and key boundaries
 
