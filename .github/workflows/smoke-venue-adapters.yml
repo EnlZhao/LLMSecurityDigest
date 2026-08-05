@@ -76,14 +76,24 @@ jobs:
             venue: ieee-sp
           - source: crossref
             venue: ieee-sp
+            sample_doi: 10.1109/sp.1984.10021
           - source: crossref
             venue: acm-ccs
+            sample_doi: 10.1145/3658644.3690227
           - source: crossref
             venue: tdsc
+            sample_doi: 10.1109/tdsc.2024.3371788
           - source: crossref
             venue: tifs
+            sample_doi: 10.1109/tifs.2010.2098873
           - source: crossref
             venue: tops
+            sample_doi: 10.1145/3546579
+          - source: openreview
+            venue: iclr
+            openreview_venue: ICLR.cc/2025/Conference
+          - source: arxiv
+            venue: arxiv
     steps:
       - uses: actions/checkout@v4
 
@@ -99,7 +109,11 @@ jobs:
       - name: Collect one official record and validate its report
         env:
           VENUE: ${{ matrix.venue }}
+          SAMPLE_DOI: ${{ matrix.sample_doi }}
           SOURCE: ${{ matrix.source }}
+          OPENREVIEW_VENUE: ${{ matrix.openreview_venue }}
+          OPENREVIEW_USERNAME: ${{ secrets.OPENREVIEW_USERNAME }}
+          OPENREVIEW_PASSWORD: ${{ secrets.OPENREVIEW_PASSWORD }}
           LLMSD_HEADLESS_FALLBACK: "1"
         run: |
           python - <<'PY'
@@ -109,17 +123,19 @@ jobs:
 
           venue = os.environ["VENUE"]
           source = os.environ["SOURCE"]
+          openreview_venue = os.environ.get("OPENREVIEW_VENUE", "").strip()
           work = Path(".smoke")
           work.mkdir()
           plan = {
               "queries": ["LLM security"],
               "sources": [source],
-              "venue_groups": [venue],
+              "venue_groups": [venue] if source in {"official", "crossref"} else [],
+              "openreview_venues": [openreview_venue] if source == "openreview" and openreview_venue else [],
               # Crossref deposits use DOI/container/ISSN metadata and are
               # not tied to an annual endpoint. Keep its smoke query
               # cross-year so a current deposit can exercise the filter.
-              "date_from": None if source == "crossref" else "2024-01-01",
-              "date_to": None if source == "crossref" else "2024-12-31",
+              "date_from": None if source in {"crossref", "openreview"} else "2024-01-01",
+              "date_to": None if source in {"crossref", "openreview"} else "2024-12-31",
               "max_results_per_query": 1,
               "max_results_per_venue": 1,
               "target": 10,
@@ -143,18 +159,20 @@ jobs:
 
           venue = os.environ["VENUE"]
           payload = json.loads(Path(".smoke/candidates.json").read_text(encoding="utf-8"))
+          report_venue = os.environ.get("OPENREVIEW_VENUE", "").strip() if os.environ["SOURCE"] == "openreview" else venue
           reports = [
               report for report in payload.get("source_reports", [])
               if report.get("source") == os.environ["SOURCE"]
-              and report.get("venue_group") == venue
+              and report.get("adapter") != "summary"
+              and (os.environ["SOURCE"] == "arxiv" or report.get("venue_group") == report_venue)
           ]
           if len(reports) != 1:
-              raise SystemExit(f"expected exactly one source report for {venue}, got {len(reports)}")
+              raise SystemExit(f"expected exactly one source report for {report_venue}, got {len(reports)}")
           report = reports[0]
           source = os.environ["SOURCE"]
-          if source == "official":
+          if source in {"official", "openreview", "arxiv"}:
               passed = (
-                  report.get("status") == "ok"
+                  report.get("status") in {"ok", "partial"}
                   and report.get("requests_succeeded", 0) >= 1
                   and report.get("records_valid", 0) >= 1
               )
@@ -179,3 +197,26 @@ jobs:
               print(json.dumps(report, ensure_ascii=False, indent=2), file=sys.stderr)
               raise SystemExit(f"{source} adapter smoke failed for {venue}")
           PY
+
+      - name: Refresh one record and validate authoritative BibTeX
+        env:
+          SOURCE: ${{ matrix.source }}
+          VENUE: ${{ matrix.venue }}
+          SAMPLE_DOI: ${{ matrix.sample_doi }}
+          OPENREVIEW_VENUE: ${{ matrix.openreview_venue }}
+          OPENREVIEW_USERNAME: ${{ secrets.OPENREVIEW_USERNAME }}
+          OPENREVIEW_PASSWORD: ${{ secrets.OPENREVIEW_PASSWORD }}
+          LLMSD_HEADLESS_FALLBACK: "1"
+        run: |
+          args=(
+            --candidates .smoke/candidates.json
+            --source "$SOURCE"
+            --venue "$VENUE"
+          )
+          if [ -n "${SAMPLE_DOI:-}" ]; then
+            args+=(--sample-doi "$SAMPLE_DOI")
+          fi
+          if [ "$SOURCE" = "openreview" ]; then
+            args+=(--openreview-venue "$OPENREVIEW_VENUE")
+          fi
+          python scripts/llm_security/smoke_venue_adapter.py "${args[@]}"

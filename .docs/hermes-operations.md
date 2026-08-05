@@ -154,6 +154,59 @@ container titles. The formal tier is routed to deterministic adapters in
 - arXiv uses the Atom API and official BibTeX endpoint. `journal_ref` and
   comments are evidence only until a formal record is matched.
 
+BibTeX selection is deterministic and source-owned. After an authoritative
+detail refresh, `materialize` first downloads the registered venue's explicit
+BibTeX export (or consumes an official structured export such as OpenReview's
+`content._bibtex.value`). Only when that source has no export does it use DOI
+content negotiation with `Accept: application/x-bibtex`; the returned entry is
+still checked against the refreshed title, every author, and DOI. A DOI,
+BibTeX entry, abstract, or URL is never inferred from a search result, browser
+snippet, or Hermes prose.
+
+The IJCAI adapter preserves the proceedings' zero-padded identity (for
+example `2023-0001`) and reconstructs both the detail route
+`/proceedings/2023/1` and the official export
+`/proceedings/2023/bibtex/1` from that identity. This route grammar is
+baseline-owned and is not an evolution overlay setting.
+
+#### BibTeX smoke record (2026-08-05)
+
+The local smoke harness selected one real record from each registered source
+using a bounded year window. It called the authoritative refresh and then the
+script-owned BibTeX downloader; lengths below are only observability, not
+content stored in Git.
+
+| Source group | Result | BibTeX path |
+| --- | --- | --- |
+| USENIX Security 2024 | passed | official USENIX export |
+| IEEE S&P 2024 | passed | DOI content negotiation (CSDL record) |
+| NDSS 2026 | passed | DOI content negotiation after exact Crossref DOI resolution |
+| NeurIPS 2024 | passed | official proceedings BibTeX export |
+| ICML 2024 | passed | PMLR bibliography export |
+| CVPR 2023 | passed | CVF inline BibTeX |
+| ECCV 2024 | passed | DOI content negotiation |
+| ACL 2025 | passed | ACL Anthology export/DOI negotiation |
+| EMNLP 2024 | passed | ACL Anthology export/DOI negotiation |
+| AAAI 2023 | passed | DOI content negotiation |
+| IJCAI 2023 | passed after route fix | official IJCAI export |
+| ACM CCS 2025 | passed | DOI content negotiation via Crossref deposit |
+| IEEE TDSC 2024 | passed | DOI content negotiation via Crossref deposit |
+| IEEE TIFS 2026 | passed | DOI content negotiation via Crossref deposit |
+| ACM TOPS 2023 | passed | DOI content negotiation via Crossref deposit |
+| arXiv | direct BibTeX endpoint passed for a known ID; Atom discovery later returned HTTP 429 | `arxiv.org/bibtex/<id>` |
+
+The following are operational failures, not successful collections: the
+optional IEEE Xplore API returned HTTP 403 for the configured key on S&P,
+TDSC, and TIFS; Crossref/official registered paths remained independent and
+successful. OpenReview ICLR 2025 and its inline BibTeX path succeeded, while
+some NeurIPS/ICML queries returned an explicit anti-bot challenge. The report
+keeps the challenge visible and writes no record; a Linux run with Playwright
+installed may retry only through the allowlisted headless broker. If that
+broker cannot solve the challenge, Hermes must leave the source unresolved or
+use another registered year, never synthesize metadata. An arXiv 429 is
+handled the same way: respect the bounded retry/rate limit and leave the
+source report visible rather than asking the LLM to fill a paper.
+
 ### Authoritative API and key boundaries
 
 The adapters use the following public contracts. These are deterministic HTTP

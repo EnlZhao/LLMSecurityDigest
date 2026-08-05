@@ -17,6 +17,7 @@ from llm_security_digest.papers.official import (
     PMLRAdapter,
     USENIXAdapter,
 )
+from llm_security_digest.papers.pipeline import fetch_bibtex
 from llm_security_digest.papers.sources import CrossrefSource, official_route_for_paper
 
 
@@ -64,6 +65,88 @@ def test_neurips_paper_links_are_bound_to_proceedings_host() -> None:
     assert NeurIPSAdapter.paper_urls(html, year=2024) == [
         "https://proceedings.neurips.cc/paper_files/paper/2024/hash/official-Abstract-Conference.html"
     ]
+
+
+def test_neurips_authoritative_route_restores_hash_segment() -> None:
+    source_id = "2024:official"
+    paper = PaperFacts(
+        paper_id=f"neurips:{source_id}", source="neurips", source_id=source_id,
+        title="Title", authors=["Alice Example"], abstract="Abstract",
+        publication_status="published", venue=get_venue_spec("neurips").name,
+        published_at=None, updated_at=None, doi=None,
+        landing_url="https://proceedings.neurips.cc/paper_files/paper/2024/hash/official-Abstract-Conference.html",
+        pdf_url="https://proceedings.neurips.cc/paper_files/paper/2024/hash/official-Paper-Conference.pdf",
+    )
+
+    _spec, url, _hosts = official_route_for_paper(paper)
+
+    assert url == paper.landing_url
+
+
+def test_ijcai_padded_source_id_routes_to_official_bibtex_export() -> None:
+    source_id = "2023-0001"
+    paper = PaperFacts(
+        paper_id=f"ijcai:{source_id}", source="ijcai", source_id=source_id,
+        title="Official IJCAI Paper", authors=["Alice Example"], abstract="Abstract",
+        publication_status="published", venue=get_venue_spec("ijcai").name,
+        published_at=None, updated_at=None, doi="10.24963/ijcai.2023/1",
+        landing_url="https://www.ijcai.org/proceedings/2023/1",
+        pdf_url="https://www.ijcai.org/proceedings/2023/0001.pdf",
+        source_metadata={"bibtex_url": "https://www.ijcai.org/proceedings/2023/bibtex/1"},
+    )
+
+    _spec, route, hosts = official_route_for_paper(paper)
+    assert route == paper.landing_url
+    assert hosts == frozenset({"www.ijcai.org"})
+
+    class Client:
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def get(self, url: str, **_kwargs) -> HttpResponse:
+            self.calls.append(url)
+            return HttpResponse(
+                url=url,
+                final_url=url,
+                status=200,
+                headers={"content-type": "application/x-bibtex"},
+                body=(
+                    "@inproceedings{ijcai2023p1,\n"
+                    "  title={Official IJCAI Paper},\n"
+                    "  author={Alice Example},\n"
+                    "  doi={10.24963/ijcai.2023/1}\n"
+                    "}\n"
+                ).encode(),
+            )
+
+    setattr(paper, "_authoritative_refresh", True)
+    client = Client()
+    bibtex, bibtex_url, _provenance = fetch_bibtex(paper, client=client)
+
+    assert client.calls == ["https://www.ijcai.org/proceedings/2023/bibtex/1"]
+    assert bibtex_url == client.calls[0]
+    assert bibtex.startswith("@inproceedings")
+
+    class FallbackClient(Client):
+        def get(self, url: str, **kwargs) -> HttpResponse:
+            if url.endswith("/proceedings/2023/bibtex/1"):
+                self.calls.append(url)
+                raise ValueError("official export unavailable")
+            return super().get(url, **kwargs)
+
+    fallback_client = FallbackClient()
+    _bibtex, fallback_url, fallback_provenance = fetch_bibtex(paper, client=fallback_client)
+    assert fallback_client.calls == [
+        "https://www.ijcai.org/proceedings/2023/bibtex/1",
+        "https://doi.org/10.24963%2Fijcai.2023%2F1",
+    ]
+    assert fallback_url == fallback_client.calls[-1]
+    assert fallback_provenance["fallback_attempts"][0]["endpoint_kind"] == "official"
+
+    paper.source_id = "2023-0000"
+    paper.paper_id = "ijcai:2023-0000"
+    with pytest.raises(ValueError, match="invalid IJCAI source id"):
+        official_route_for_paper(paper)
 
 
 def test_aaai_issue_pagination_and_article_links_are_host_bound() -> None:

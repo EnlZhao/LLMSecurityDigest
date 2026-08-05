@@ -256,14 +256,20 @@ def official_route_for_paper(paper: PaperFacts) -> tuple[str, str, frozenset[str
         match = re.fullmatch(r"((?:19|20)\d{2}):([A-Za-z0-9][A-Za-z0-9._-]{1,180})", source_id)
         if not match:
             raise ValueError("invalid NeurIPS source id")
-        url = f"https://proceedings.neurips.cc/paper_files/paper/{match.group(1)}/{match.group(2)}-Abstract-Conference.html"
+        # NeurIPS stores the hash-keyed paper pages under a stable ``hash``
+        # path segment.  Discovery strips that routing directory from the
+        # source id, so authoritative refresh must put it back here.
+        url = f"https://proceedings.neurips.cc/paper_files/paper/{match.group(1)}/hash/{match.group(2)}-Abstract-Conference.html"
     elif source == "aaai_ojs":
         if not re.fullmatch(r"[1-9]\d{0,8}", source_id):
             raise ValueError("invalid AAAI article id")
         url = f"https://ojs.aaai.org/index.php/AAAI/article/view/{source_id}"
     elif source == "ijcai":
-        match = re.fullmatch(r"((?:19|20)\d{2})-([1-9]\d{0,4})", source_id)
-        if not match:
+        # Discovery keeps the proceedings' zero-padded paper number in the
+        # identity (for example ``2023-0001``). Accept that canonical form
+        # while rejecting an all-zero number.
+        match = re.fullmatch(r"((?:19|20)\d{2})-([0-9]{1,5})", source_id)
+        if not match or int(match.group(2)) == 0:
             raise ValueError("invalid IJCAI source id")
         url = f"https://www.ijcai.org/proceedings/{match.group(1)}/{int(match.group(2))}"
     elif source == "usenix":
@@ -1439,6 +1445,21 @@ class OpenReviewSource:
                 continue
             landing_url = f"https://openreview.net/forum?id={parse.quote(forum_id)}"
             doi = normalize_doi(_text(content.get("doi"))) or None
+            source_metadata = {
+                "note_id": _text(note.get("id")),
+                "forum_id": forum_id,
+                "decision_replies": decisions,
+            }
+            # OpenReview publishes the authoritative citation in the note's
+            # structured ``_bibtex.value`` field. Preserve it as parser-owned
+            # metadata; fetch_bibtex will only consume it after an identity
+            # refresh and will still validate title and every author.
+            raw_bibtex = content.get("_bibtex")
+            if isinstance(raw_bibtex, dict):
+                raw_bibtex = raw_bibtex.get("value")
+            if isinstance(raw_bibtex, str) and raw_bibtex.lstrip().startswith("@"):
+                source_metadata["bibtex_inline"] = raw_bibtex.strip()
+                source_metadata["bibtex_source_url"] = response.url
             paper = PaperFacts(
                 paper_id=f"openreview:{forum_id}",
                 source="openreview",
@@ -1466,11 +1487,7 @@ class OpenReviewSource:
                     "decisions": decisions,
                     "verified": bool(accepted_by_reply or accepted_by_venue),
                 }],
-                source_metadata={
-                    "note_id": _text(note.get("id")),
-                    "forum_id": forum_id,
-                    "decision_replies": decisions,
-                },
+                source_metadata=source_metadata,
                 collection_tier="formal",
                 match_state="canonical",
                 provenance={field: dict(provenance) for field in (
@@ -1712,9 +1729,21 @@ class CrossrefSource:
             pdf_hosts = _trusted_crossref_hosts(spec)
             for link in item.get("link") or []:
                 candidate_url = str(link.get("URL", ""))
-                candidate_host = parse.urlsplit(candidate_url).hostname
+                parsed_link = parse.urlsplit(candidate_url)
+                candidate_host = parsed_link.hostname
+                content_type = _text(link.get("content-type")).casefold()
+                path = parsed_link.path.casefold()
+                # Crossref deposits frequently label publisher PDF links as
+                # ``unspecified``. The URL path is still an authoritative
+                # publisher-owned signal when it uses an explicit PDF route;
+                # a generic DOI landing page does not qualify.
+                is_pdf_link = (
+                    "pdf" in content_type
+                    or path.endswith(".pdf")
+                    or bool(re.search(r"/(?:doi/)?pdf(?:/|$)", path))
+                )
                 if (
-                    "pdf" in _text(link.get("content-type")).lower()
+                    is_pdf_link
                     and candidate_url.startswith("https://")
                     and candidate_host
                     and candidate_host.casefold().rstrip(".") in pdf_hosts

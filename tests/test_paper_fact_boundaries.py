@@ -452,6 +452,7 @@ def test_openreview_v2_acceptance_requires_an_explicit_decision_reply() -> None:
             "abstract": "Authoritative abstract from the OpenReview submission.",
             "venueid": "ICLR.cc/2025/Conference",
             "venue": "ICLR 2025 Conference",
+            "_bibtex": {"value": "@inproceedings{example, title={Verified OpenReview Paper}, author={Alice Example and Bob Example}}"},
         },
     }
     accepted = {
@@ -487,6 +488,12 @@ def test_openreview_v2_acceptance_requires_an_explicit_decision_reply() -> None:
     assert [paper.paper_id for paper in papers] == ["openreview:forum-id"]
     assert papers[0].publication_status == "accepted"
     assert papers[0].venue == "International Conference on Learning Representations"
+    assert papers[0].source_metadata["bibtex_inline"].startswith("@inproceedings")
+    assert papers[0].source_metadata["bibtex_source_url"] == response.url
+    setattr(papers[0], "_authoritative_refresh", True)
+    _bibtex, bibtex_url, provenance = pipeline.fetch_bibtex(papers[0], client=object())
+    assert bibtex_url == response.url
+    assert provenance["source_url"] == response.url
     assert {item["reason"] for item in incomplete} == {"pending_decision"}
 
 
@@ -828,6 +835,27 @@ def test_crossref_missing_abstract_or_pdf_stays_incomplete(missing) -> None:
     assert papers == []
     assert incomplete[0]["reason"] == "required_crossref_field_missing"
     assert missing in incomplete[0]["missing"]
+
+
+def test_crossref_acm_ordinal_container_and_unspecified_pdf_are_authoritative() -> None:
+    item = {
+        "DOI": "10.1145/1234567",
+        "title": ["ACM Security Paper"],
+        "author": [{"given": "Alice", "family": "Example"}],
+        "abstract": "An authoritative ACM abstract.",
+        "container-title": ["Proceedings of the 27th ACM conference on Computer and communications security"],
+        "published": {"date-parts": [[2024, 10, 1]]},
+        "link": [{"URL": "https://dl.acm.org/doi/pdf/10.1145/1234567", "content-type": "unspecified"}],
+        "type": "proceedings-article",
+    }
+
+    papers, incomplete = CrossrefSource.parse_items_with_incomplete(
+        _crossref_response(item), expected_venue="acm-ccs"
+    )
+
+    assert not incomplete
+    assert len(papers) == 1
+    assert papers[0].pdf_url == "https://dl.acm.org/doi/pdf/10.1145/1234567"
 
 
 def test_crossref_unknown_publication_date_remains_unknown() -> None:

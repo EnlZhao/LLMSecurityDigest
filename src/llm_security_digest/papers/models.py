@@ -55,6 +55,15 @@ def _registry_key(value: str) -> str:
     return "".join(char for char in value if char.isalnum())
 
 
+def _normalize_container_title(value: str) -> str:
+    """Normalize annual/ordinal proceedings decorations for venue matching."""
+
+    text = unicodedata.normalize("NFKC", str(value or ""))
+    text = re.sub(r"\b(?:19|20)\d{2}\b", " ", text)
+    text = re.sub(r"\b\d+(?:st|nd|rd|th)\b", " ", text, flags=re.IGNORECASE)
+    return normalize_title(text)
+
+
 @dataclass(frozen=True)
 class VenueSpec:
     """A controlled venue definition used by official source adapters.
@@ -100,12 +109,17 @@ class VenueSpec:
         return any(candidate == normalize_title(item) for item in names if item)
 
     def matches_container(self, value: str) -> bool:
-        candidate = normalize_title(value)
+        # Proceedings deposits commonly add an ordinal or calendar year to
+        # an otherwise stable container title (for example, ``27th ACM
+        # Conference ...``). Remove only those routing tokens before the
+        # existing normalized containment check; publisher and venue words
+        # remain required and arbitrary container names still fail closed.
+        candidate = _normalize_container_title(value)
         names = self.crossref_container_titles or (self.name,)
         return any(
-            candidate == normalize_title(item)
-            or normalize_title(item) in candidate
-            or candidate in normalize_title(item)
+            candidate == _normalize_container_title(item)
+            or _normalize_container_title(item) in candidate
+            or candidate in _normalize_container_title(item)
             for item in names if item
         )
 

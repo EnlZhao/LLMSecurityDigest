@@ -490,8 +490,10 @@ def _bibtex_source_url(paper: PaperFacts) -> str | None:
         if len(parts) == 2 and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", parts[0]) and re.fullmatch(r"v\d+", parts[1], flags=re.IGNORECASE):
             return f"https://proceedings.mlr.press/{parts[1]}/assets/bib/bibliography.bib"
     if source == "ijcai":
-        match = re.fullmatch(r"((?:19|20)\d{2})-([1-9]\d{0,4})", source_id)
-        if match:
+        # IJCAI discovery preserves the zero-padded proceedings number in
+        # the source id (for example ``2023-0001``).
+        match = re.fullmatch(r"((?:19|20)\d{2})-([0-9]{1,5})", source_id)
+        if match and int(match.group(2)) > 0:
             return f"https://www.ijcai.org/proceedings/{match.group(1)}/bibtex/{int(match.group(2))}"
     metadata = paper.source_metadata if isinstance(paper.source_metadata, dict) else {}
     value = metadata.get("bibtex_url") if getattr(paper, "_authoritative_refresh", False) else None
@@ -528,7 +530,11 @@ def _bibtex_source_url(paper: PaperFacts) -> str | None:
 
 
 def _bibtex_hosts(paper: PaperFacts) -> frozenset[str] | None:
-    if paper.doi:
+    # A DOI resolver is intentionally allowed to redirect to its registered
+    # publisher.  When an authoritative refresh supplied a direct venue
+    # export, keep the normal source-host allowlist even if the record also
+    # has a DOI.
+    if paper.doi and not _bibtex_source_url(paper):
         # DOI content negotiation redirects to the publisher.  The DOI is
         # already authoritative and strictly validated; the resolver's
         # publisher redirect is the one intentionally open route.
@@ -565,54 +571,75 @@ def fetch_bibtex(paper: PaperFacts, *, client: HttpClient) -> tuple[str, str, di
     inline = metadata.get("bibtex_inline") if getattr(paper, "_authoritative_refresh", False) else None
     if isinstance(inline, str) and inline.lstrip().startswith("@"):
         validate_bibtex(paper, inline)
-        return inline.strip(), paper.landing_url, {
+        source_url = metadata.get("bibtex_source_url")
+        if not isinstance(source_url, str) or not source_url.startswith("https://"):
+            source_url = paper.landing_url
+        return inline.strip(), source_url, {
             "source": "official_detail_bibtex",
-            "source_url": paper.landing_url,
+            "source_url": source_url,
             "fetched_at": utc_now(),
             "response_sha256": (paper.provenance.get("title", {}) if isinstance(paper.provenance, dict) else {}).get("response_sha256"),
             "extractor_version": "inline-1",
         }
 
-    # DOI content negotiation is the canonical path for formal records (and
-    # for arXiv records that advertise a DOI). It avoids treating Crossref's
-    # transform endpoint as a second, potentially divergent authority.
-    if paper.doi:
-        url = f"https://doi.org/{parse.quote(normalize_doi(paper.doi), safe='')}"
-    elif paper.source == "arxiv":
-        url = f"https://arxiv.org/bibtex/{parse.quote(paper.source_id)}"
+    # Prefer a source-owned export discovered during the authoritative detail
+    # refresh. DOI content negotiation is the controlled fallback when the
+    # venue has no direct export (or that export is temporarily unavailable);
+    # every returned entry is still identity-validated by this function.
+    source_url = _bibtex_source_url(paper)
+    endpoints: list[tuple[str, str, frozenset[str] | None]] = []
+    if source_url:
+        endpoints.append(("official", source_url, _bibtex_hosts(paper)))
+    if paper.source == "arxiv":
+        endpoints.append(("arxiv", f"https://arxiv.org/bibtex/{parse.quote(paper.source_id)}", frozenset({"arxiv.org"})))
     elif paper.source == "openreview":
-        url = f"https://openreview.net/bibtex?id={parse.quote(paper.source_id)}"
-    else:
-        url = _bibtex_source_url(paper)
-    if not url:
+        endpoints.append(("openreview", f"https://openreview.net/bibtex?id={parse.quote(paper.source_id)}", frozenset({"openreview.net"})))
+    if paper.doi:
+        endpoints.append(("doi", f"https://doi.org/{parse.quote(normalize_doi(paper.doi), safe='')}", None))
+    if not endpoints:
         raise ValueError("no authoritative BibTeX endpoint for paper")
-    response = client.get(
-        url,
-        headers={"Accept": "application/x-bibtex"},
-        min_interval=0.25,
-        max_bytes=20 * 1024 * 1024 if paper.source == "pmlr" else 2 * 1024 * 1024,
-        # DOI content negotiation is intentionally handled by the resolver;
-        # all non-DOI routes are fixed baseline hosts.  The refreshed record,
-        # rather than the candidate JSON, determines this URL.
-        allowed_hosts=_bibtex_hosts(paper),
-    )
-    raw_bibtex = response.text().strip()
-    bibtex = _validate_bibtex_entry(paper, raw_bibtex) if paper.source == "pmlr" else raw_bibtex
-    if not bibtex:
-        raise ValueError("official BibTeX response has no title/author-matching entry")
-    validate_bibtex(paper, bibtex)
-    provenance = {
-        "source": "authoritative_bibtex_endpoint",
-        "source_url": url,
-        "requested_url": url,
-        "final_url": response.final_url,
-        "transport": response.transport,
-        "redirect_chain": list(response.redirect_chain),
-        "fetched_at": utc_now(),
-        "response_sha256": response.sha256,
-        "extractor_version": "1",
-    }
-    return bibtex, url, provenance
+    failures: list[dict[str, str]] = []
+    for endpoint_kind, url, allowed_hosts in endpoints:
+        try:
+            response = client.get(
+                url,
+                headers={"Accept": "application/x-bibtex"},
+                min_interval=0.25,
+                max_bytes=20 * 1024 * 1024 if paper.source == "pmlr" else 2 * 1024 * 1024,
+                # DOI content negotiation is intentionally handled by the
+                # resolver; all other routes are fixed baseline hosts. The
+                # refreshed record, rather than candidate JSON, determines
+                # every non-DOI URL.
+                allowed_hosts=allowed_hosts,
+            )
+            raw_bibtex = response.text().strip()
+            bibtex = _validate_bibtex_entry(paper, raw_bibtex) if paper.source == "pmlr" else raw_bibtex
+            if not bibtex:
+                raise ValueError("BibTeX response has no title/author-matching entry")
+            validate_bibtex(paper, bibtex)
+            provenance = {
+                "source": "authoritative_bibtex_endpoint",
+                "endpoint_kind": endpoint_kind,
+                "source_url": url,
+                "requested_url": url,
+                "final_url": response.final_url,
+                "transport": response.transport,
+                "redirect_chain": list(response.redirect_chain),
+                "fetched_at": utc_now(),
+                "response_sha256": response.sha256,
+                "extractor_version": "1",
+            }
+            if failures:
+                provenance["fallback_attempts"] = failures
+            return bibtex, url, provenance
+        except Exception as exc:
+            failures.append({
+                "endpoint_kind": endpoint_kind,
+                "error_type": type(exc).__name__,
+                "message": str(exc)[:200],
+            })
+    summary = "; ".join(f"{item['endpoint_kind']}:{item['error_type']}" for item in failures)
+    raise ValueError(f"authoritative BibTeX endpoints failed: {summary}")
 
 
 def fetch_fulltext(paper: PaperFacts, *, client: HttpClient, data_dir: Path, max_bytes: int) -> dict[str, Any]:
