@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import ipaddress
 import time
@@ -261,9 +262,18 @@ class HttpClient:
                     break
                 wait = self._retry_after(exc.headers.get("Retry-After")) or (attempt + 1) * 3
                 time.sleep(min(wait, 60))
-            except (error.URLError, TimeoutError) as exc:
+            except (
+                error.URLError,
+                TimeoutError,
+                ConnectionError,
+                http.client.RemoteDisconnected,
+            ) as exc:
                 # ``URLError.reason`` may include the complete request URL;
-                # expose only a redacted, bounded diagnostic to callers.
+                # expose only a redacted, bounded diagnostic to callers. Some
+                # OJS hosts close the socket before sending an HTTP response;
+                # treat that transport-level disconnect like the other
+                # retryable blocked-host failures so the registered headless
+                # fallback can take over.
                 last_error = HttpRequestError(0, _safe_url(url, provenance_url))
                 if attempt + 1 >= self.retries:
                     break
