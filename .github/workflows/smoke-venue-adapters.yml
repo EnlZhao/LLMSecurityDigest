@@ -134,8 +134,12 @@ jobs:
               # Crossref deposits use DOI/container/ISSN metadata and are
               # not tied to an annual endpoint. Keep its smoke query
               # cross-year so a current deposit can exercise the filter.
-              "date_from": None if source in {"crossref", "openreview"} else "2024-01-01",
-              "date_to": None if source in {"crossref", "openreview"} else "2024-12-31",
+              # Annual proceedings have a stable smoke year. arXiv is a
+              # rolling index, so a fixed year can make a healthy API return
+              # zero candidates as soon as the query's newest records move
+              # beyond that window.
+              "date_from": None if source in {"crossref", "openreview", "arxiv"} else "2024-01-01",
+              "date_to": None if source in {"crossref", "openreview", "arxiv"} else "2024-12-31",
               "max_results_per_query": 1,
               "max_results_per_venue": 1,
               "target": 10,
