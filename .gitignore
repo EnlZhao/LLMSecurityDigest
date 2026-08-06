@@ -15,6 +15,7 @@ venv/
 .data/
 cache/
 logs/
+RUN/
 downloads/
 run.lock
 cron_prompt.md

@@ -146,9 +146,9 @@ def site_footer(prefix: str = "") -> str:
     </div>
     <div class="footer-col footer-meta"><span>Updated daily</span><a href="{prefix}rss.xml">订阅 RSS ↗</a></div>
   </div>
-  <div class="footer-stats" style="width:min(var(--max-w), calc(100% - 48px)); margin:0 auto; padding:0 4vw 24px; display:flex; gap:18px; justify-content:flex-end; color:var(--ink-2); font:11px/1 var(--mono); border-top:1px dashed var(--line); margin-top:-12px; padding-top:18px;">
-    <span><span aria-hidden="true" style="margin-right:4px;">👁</span>本站 PV <strong id="busuanzi_value_site_pv" style="color:var(--ink); font-weight:600; margin-left:2px;">…</strong></span>
-    <span><span aria-hidden="true" style="margin-right:4px;">·</span>本站 UV <strong id="busuanzi_value_site_uv" style="color:var(--ink); font-weight:600; margin-left:2px;">…</strong></span>
+  <div class="footer-stats" aria-label="站点访问统计">
+    <span>本站 PV <strong id="busuanzi_value_site_pv">…</strong></span>
+    <span>本站 UV <strong id="busuanzi_value_site_uv">…</strong></span>
   </div>
 </footer>
 <script async src="https://busuanzi.ibruce.info/busuanzi/2.3/busuanzi.pure.mini.js"></script>
