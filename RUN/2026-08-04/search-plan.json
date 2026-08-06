@@ -1,0 +1,47 @@
+{
+  "queries": [
+    "abs:\"jailbreak\" OR abs:\"prompt injection\"",
+    "abs:\"backdoor\" AND (abs:\"LLM\" OR abs:\"language model\")",
+    "abs:\"agent security\" OR abs:\"LLM security\""
+  ],
+  "filter_keywords": [
+    "jailbreak",
+    "prompt injection",
+    "backdoor",
+    "language model",
+    "LLM",
+    "agent security"
+  ],
+  "sources": [
+    "official",
+    "crossref",
+    "ieee_xplore",
+    "arxiv"
+  ],
+  "openreview_venues": [],
+  "target": 10,
+  "scholar_enrich_limit": 30,
+  "crossref_venues": [
+    "ieee-sp",
+    "acm-ccs",
+    "tdsc",
+    "tifs",
+    "tops"
+  ],
+  "venue_groups": [
+    "usenix-security",
+    "ieee-sp",
+    "acm-ccs",
+    "ndss",
+    "iclr",
+    "neurips",
+    "icml",
+    "acl",
+    "emnlp",
+    "aaai",
+    "ijcai",
+    "tdsc",
+    "tifs",
+    "tops"
+  ]
+}
